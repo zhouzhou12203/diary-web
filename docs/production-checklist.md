@@ -5,13 +5,13 @@
 ## 1. 代码与构建
 
 - 本地工作区已确认需要保留的改动，没有临时调试文件。
-- 已执行 `npm run check`，并确保 `lint`、函数测试、UI 测试、生产构建、`smoke:dist` 与 `check:release` 全部通过。
+- 已执行 `npm run check`，并确保 `lint`、函数测试、UI 测试、生产构建、`smoke:dist`、`check:release` 与 `check:cloudflare` 全部通过。
 - 如构建时出现 Browserslist 数据过旧提示，已执行 `npm run update:browserslist` 并重新构建确认告警消失。
 - 生产构建产物来自当前待发布提交，没有手工修改 `dist`。
 
 ## 2. Cloudflare 配置
 
-- 已执行 `npm run check:cloudflare`。
+- 如需单独复核，可再次执行 `npm run check:cloudflare`。
 - Pages 项目已绑定 D1：变量名为 `DB`。
 - 已配置 `SESSION_SECRET`。
 - 已按需配置 `ADMIN_BOOTSTRAP_PASSWORD`、`APP_BOOTSTRAP_PASSWORD`、`STATS_API_KEY`。

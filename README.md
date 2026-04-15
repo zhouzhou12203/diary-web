@@ -179,10 +179,10 @@ npm run start:remote
 
 10. **上线前最终核对**
    - 按 [docs/production-checklist.md](docs/production-checklist.md) 完成构建、配置、安全与 smoke test 检查
-   - 可直接执行 `npm run check`，其中已包含 `npm run smoke:dist` 与 `npm run check:release`
+   - 可直接执行 `npm run check`，其中已包含 `npm run smoke:dist`、`npm run check:release` 与 `npm run check:cloudflare`
    - 对预发地址可执行 `npm run smoke:remote -- https://你的-preview-域名`
    - 如已有预发管理员口令，可执行 `SMOKE_ADMIN_PASSWORD='你的密码' npm run smoke:remote:admin -- https://你的-preview-域名`
-   - 对 Cloudflare 配置可执行 `npm run check:cloudflare`；如已登录 wrangler，可进一步执行 `npm run check:cloudflare:remote`
+   - 如仅需单独复核 Cloudflare 本地配置，可执行 `npm run check:cloudflare`；如已登录 wrangler，可进一步执行 `npm run check:cloudflare:remote`
    - 如需生成本次发版留档，可执行 `npm run report:release`，报告默认输出到 `reports/`
    - 如仅本地调试静态预览，可执行 `npm run smoke:remote -- http://127.0.0.1:4173 --skip-security-headers --skip-api-check`
 
@@ -257,7 +257,7 @@ npm run start:remote
 - `src/services/mockApiService.ts` 的 mock 延迟模拟和管理员权限校验统一走模块内 request helper；新增 mock 接口时不要再手写 `await wait(...)` 加 `requireAdminSession()` 组合。
 - `src/services/mockApiService.ts` 的公开布尔设置键与默认值统一集中维护，设置读取与写入都必须复用同一套 key 判断和默认值回退逻辑。
 - `src/index.css` 与 `index.html` 共同维护跳转链接、焦点样式、降低动效和元信息等上线向前端基线，不要把这些能力散落到页面组件各自补丁。
-- 每次迭代后台功能后，至少执行一次 `npm run check`，确保 lint、函数测试、UI 测试、构建和发布校验一起通过。
+- 每次迭代后台功能后，至少执行一次 `npm run check`，确保 lint、函数测试、UI 测试、构建、静态产物 smoke、发布配置校验与 Cloudflare 本地配置检查一起通过。
 
 ## 🎯 使用指南
 
