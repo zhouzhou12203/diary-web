@@ -1,29 +1,127 @@
-import { useState, useEffect } from 'react';
-import { DiaryEntry } from '../types';
+import { useState, useEffect, useRef } from 'react';
+import type { DiaryEntry } from '../types/index.ts';
 import { apiService } from '../services/api';
+import { readOfflineEntrySnapshot } from '../utils/offlineEntrySnapshot.ts';
+import { debugWarn } from '../utils/logger.ts';
+
+function compareEntries(a: DiaryEntry, b: DiaryEntry) {
+  const createdAtDiff = new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+
+  if (createdAtDiff !== 0) {
+    return createdAtDiff;
+  }
+
+  const updatedAtDiff = new Date(b.updated_at || 0).getTime() - new Date(a.updated_at || 0).getTime();
+
+  if (updatedAtDiff !== 0) {
+    return updatedAtDiff;
+  }
+
+  return (b.id || 0) - (a.id || 0);
+}
+
+function sortEntries(entries: DiaryEntry[]) {
+  return [...entries].sort(compareEntries);
+}
 
 export function useDiary() {
   const [entries, setEntries] = useState<DiaryEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [offlineSnapshotMeta, setOfflineSnapshotMeta] = useState<{ used: boolean; savedAt: string | null }>({
+    used: false,
+    savedAt: null,
+  });
+  const isMountedRef = useRef(true);
+  const loadRequestIdRef = useRef(0);
+  const mutationVersionRef = useRef(0);
+  const entriesRef = useRef<DiaryEntry[]>([]);
 
-  const loadEntries = async () => {
+  const safeSetEntries = (updater: DiaryEntry[] | ((prev: DiaryEntry[]) => DiaryEntry[])) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setEntries((prev) => {
+      const nextEntries = typeof updater === 'function' ? updater(prev) : updater;
+      const sortedEntries = sortEntries(nextEntries);
+      entriesRef.current = sortedEntries;
+      return sortedEntries;
+    });
+  };
+
+  const safeSetLoading = (nextLoading: boolean) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setLoading(nextLoading);
+  };
+
+  const safeSetError = (nextError: string | null) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setError(nextError);
+  };
+
+  const safeSetOfflineSnapshotMeta = (nextMeta: { used: boolean; savedAt: string | null }) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setOfflineSnapshotMeta(nextMeta);
+  };
+
+  const loadEntries = async ({ silent = false }: { silent?: boolean } = {}) => {
+    const requestId = ++loadRequestIdRef.current;
+    const mutationVersionAtStart = mutationVersionRef.current;
+
     try {
-      setLoading(true);
-      setError(null);
+      if (!silent) {
+        safeSetLoading(true);
+      }
+      safeSetError(null);
       const data = await apiService.getAllEntries();
-      setEntries(data);
+
+      if (requestId !== loadRequestIdRef.current || mutationVersionAtStart !== mutationVersionRef.current) {
+        return;
+      }
+
+      safeSetEntries(data);
+      safeSetOfflineSnapshotMeta({ used: false, savedAt: null });
     } catch (err) {
-      setError(err instanceof Error ? err.message : '加载失败');
+      if (requestId !== loadRequestIdRef.current) {
+        return;
+      }
+
+      if (!silent && entriesRef.current.length === 0) {
+        const snapshot = readOfflineEntrySnapshot();
+        if (snapshot) {
+          safeSetEntries(snapshot.entries);
+          safeSetError(null);
+          safeSetOfflineSnapshotMeta({ used: true, savedAt: snapshot.savedAt });
+          return;
+        }
+      }
+
+      safeSetOfflineSnapshotMeta({ used: false, savedAt: null });
+      safeSetError(err instanceof Error ? err.message : '加载失败');
     } finally {
-      setLoading(false);
+      if (!silent && requestId === loadRequestIdRef.current) {
+        safeSetLoading(false);
+      }
     }
   };
+
+  const refreshEntries = () => loadEntries();
 
   const createEntry = async (entry: Omit<DiaryEntry, 'id' | 'created_at' | 'updated_at'>) => {
     try {
       const newEntry = await apiService.createEntry(entry);
-      setEntries(prev => [newEntry, ...prev]);
+      mutationVersionRef.current += 1;
+      safeSetEntries((prev) => [newEntry, ...prev.filter((current) => current.id !== newEntry.id)]);
       return newEntry;
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : '创建失败');
@@ -33,7 +131,8 @@ export function useDiary() {
   const updateEntry = async (id: number, entry: Partial<DiaryEntry>) => {
     try {
       const updatedEntry = await apiService.updateEntry(id, entry);
-      setEntries(prev => prev.map(e => e.id === id ? updatedEntry : e));
+      mutationVersionRef.current += 1;
+      safeSetEntries((prev) => prev.map((current) => current.id === id ? updatedEntry : current));
       return updatedEntry;
     } catch (err) {
       throw new Error(err instanceof Error ? err.message : '更新失败');
@@ -43,19 +142,15 @@ export function useDiary() {
   const deleteEntry = async (id: number) => {
     try {
       // 先乐观更新UI
-      setEntries(prev => prev.filter(e => e.id !== id));
+      mutationVersionRef.current += 1;
+      safeSetEntries((prev) => prev.filter((entry) => entry.id !== id));
 
       await apiService.deleteEntry(id);
 
-      // 等待一段时间确保数据同步
-      await new Promise(resolve => setTimeout(resolve, 500));
-
-      // 重新加载数据以确保一致性
-      try {
-        await loadEntries();
-      } catch (reloadError) {
-        console.warn('重新加载数据失败，但删除操作可能已成功:', reloadError);
-      }
+      // 后台同步一次远端状态，避免阻塞当前交互。
+      void loadEntries({ silent: true }).catch((reloadError) => {
+        debugWarn('重新加载数据失败，但删除操作可能已成功:', reloadError);
+      });
 
     } catch (err) {
       // 如果删除失败，重新加载数据以恢复正确状态
@@ -65,16 +160,22 @@ export function useDiary() {
   };
 
   useEffect(() => {
+    isMountedRef.current = true;
     loadEntries();
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
 
   return {
     entries,
     loading,
     error,
+    offlineSnapshotMeta,
     createEntry,
     updateEntry,
     deleteEntry,
-    refreshEntries: loadEntries,
+    refreshEntries,
   };
 }

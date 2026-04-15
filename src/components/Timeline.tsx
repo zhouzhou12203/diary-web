@@ -1,146 +1,197 @@
-
-import { useState, useEffect } from 'react';
-import { Clock, Calendar } from 'lucide-react';
-import { DiaryEntry } from '../types';
+import { Suspense, lazy, useEffect, useMemo, useState } from 'react';
+import type { DiaryEntry } from '../types/index.ts';
 import { DiaryCard } from './DiaryCard';
+import { ContentStatePanel } from './ContentStatePanel';
 import { TimelineView } from './TimelineView';
-import { ArchiveView } from './ArchiveView';
-import { getSmartTimeDisplay, formatTimelineDate, normalizeTimeString } from '../utils/timeUtils';
+import { EntryPreviewModal } from './EntryPreviewModal';
 import { useThemeContext } from './ThemeProvider';
 import { ViewMode } from './ViewModeToggle';
+import { useAdminAuth } from './AdminAuthContext';
+import { RecommendationsPanel } from './app/RecommendationsPanel';
+import { useIsMobile } from '../hooks/useIsMobile';
+import { getMutedSurfaceStyle, getPendingPulseStyle } from './app/appShellStyles';
+import { TimelineDateDivider } from './timeline/TimelineDateDivider';
+import { TimelineDateNavigator } from './timeline/TimelineDateNavigator';
+import { TimelineTimeDivider } from './timeline/TimelineTimeDivider';
+import { createTimelineItems } from './timeline/timelineItems';
+import { useActiveTimelineDateAnchor } from './timeline/useActiveTimelineDateAnchor';
+import { getEntryRecommendations } from '../utils/recommendationUtils.ts';
+
+const ArchiveView = lazy(() =>
+  import('./ArchiveView').then((module) => ({ default: module.ArchiveView }))
+);
 
 interface TimelineProps {
   entries: DiaryEntry[];
   onEdit?: (entry: DiaryEntry) => void;
+  searchQuery?: string;
   viewMode: ViewMode;
+  highlightEntryId?: number | null;
+  isPending?: boolean;
 }
 
-export function Timeline({ entries, onEdit, viewMode }: TimelineProps) {
+function getPendingViewLabel(viewMode: ViewMode) {
+  switch (viewMode) {
+    case 'card':
+      return '卡片列表';
+    case 'timeline':
+      return '时间轴';
+    case 'archive':
+      return '归档视图';
+  }
+}
+
+export function Timeline({
+  entries,
+  onEdit,
+  searchQuery = '',
+  viewMode,
+  highlightEntryId = null,
+  isPending = false,
+}: TimelineProps) {
   const { theme } = useThemeContext();
-  const [isMobile, setIsMobile] = useState(false);
+  const { isAdminAuthenticated } = useAdminAuth();
+  const isMobile = useIsMobile();
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null);
+  const mutedSurfaceStyle = getMutedSurfaceStyle(theme);
+  const pendingPulseStyle = getPendingPulseStyle(theme);
 
-  // 检测是否为移动设备
+  const visibleEntries = entries.filter((entry) => isAdminAuthenticated || !entry.hidden);
+  const previewEntry = previewIndex === null ? null : visibleEntries[previewIndex] ?? null;
+  const timelineItems = useMemo(() => createTimelineItems(visibleEntries), [visibleEntries]);
+  const recommendations = useMemo(() => getEntryRecommendations(visibleEntries), [visibleEntries]);
+  const dateItems = useMemo(
+    () => timelineItems.filter((item) => item.type === 'date'),
+    [timelineItems]
+  );
+  const activeDateAnchor = useActiveTimelineDateAnchor(dateItems, viewMode === 'card');
+  const previewIndexById = useMemo(
+    () => new Map(visibleEntries.map((entry, index) => [entry.id, index])),
+    [visibleEntries]
+  );
+  const openPreview = (entry: DiaryEntry) => {
+    setPreviewIndex(previewIndexById.get(entry.id) ?? null);
+  };
+  const recommendationSection = recommendations.length > 0 ? (
+    <RecommendationsPanel
+      recommendations={recommendations}
+      isPending={isPending}
+      onOpenEntry={openPreview}
+    />
+  ) : null;
+
   useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
+    if (!highlightEntryId) {
+      return;
+    }
 
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+    const targetElement = document.getElementById(`entry-${highlightEntryId}`);
+    if (!targetElement) {
+      return;
+    }
 
-  // 过滤掉隐藏的日记（只有管理员可以看到）
-  const visibleEntries = entries.filter(entry => !entry.hidden);
+    const rect = targetElement.getBoundingClientRect();
+    const inViewport = rect.top >= 96 && rect.bottom <= window.innerHeight - 48;
+
+    if (!inViewport) {
+      targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }, [highlightEntryId, viewMode]);
 
   // 根据视图模式选择对应的组件
   if (viewMode === 'timeline') {
-    return <TimelineView entries={visibleEntries} onEdit={onEdit} />;
+    return (
+      <div className="space-y-5">
+        {recommendationSection}
+        <TimelineView
+          entries={visibleEntries}
+          onEdit={onEdit}
+          onPreview={openPreview}
+          searchQuery={searchQuery}
+          highlightEntryId={highlightEntryId}
+        />
+      </div>
+    );
   }
 
   if (viewMode === 'archive') {
-    return <ArchiveView entries={visibleEntries} onEdit={onEdit} />;
+    return (
+      <div className="space-y-5">
+        {recommendationSection}
+        <Suspense
+          fallback={
+            <ContentStatePanel
+              icon="⌛"
+              eyebrow="archive loading"
+              title="正在加载归档视图..."
+              description="归纳分组和懒加载模块正在准备中。"
+              isMobile={isMobile}
+              surface="muted"
+              density="compact"
+            />
+          }
+        >
+          <ArchiveView entries={visibleEntries} onEdit={onEdit} highlightEntryId={highlightEntryId} />
+        </Suspense>
+      </div>
+    );
   }
-
-  // 卡片模式的逻辑
-  const groupedEntries = groupEntriesByDate(visibleEntries);
-
-  // 创建带时间分隔的条目列表
-  const createTimelineItems = () => {
-    const items: Array<{ type: 'date' | 'entry' | 'time'; data: any; key: string }> = [];
-
-    Object.entries(groupedEntries).forEach(([dateGroup, groupEntries], dateIndex) => {
-      // 添加日期分隔符
-      items.push({
-        type: 'date',
-        data: { dateGroup, isFirst: dateIndex === 0 },
-        key: `date-${dateGroup}`
-      });
-
-      groupEntries.forEach((entry, entryIndex) => {
-        // 添加时间分隔符（除了第一个条目）
-        if (entryIndex > 0) {
-          const timeDisplay = getSmartTimeDisplay(entry.created_at!);
-          items.push({
-            type: 'time',
-            data: { timeDisplay, entry },
-            key: `time-${entry.id}`
-          });
-        }
-
-        // 添加日记条目
-        items.push({
-          type: 'entry',
-          data: entry,
-          key: `entry-${entry.id}`
-        });
-      });
-    });
-
-    return items;
-  };
-
-  const timelineItems = createTimelineItems();
 
   return (
     <div className={`${isMobile ? 'max-w-full' : 'max-w-4xl'} mx-auto`}>
-      <div className="space-y-6">
+      {isPending && (
+        <section
+          className={`mb-4 overflow-hidden rounded-[1.25rem] ${isMobile ? 'p-2.5' : 'p-3'}`}
+          style={{
+            ...mutedSurfaceStyle,
+            color: theme.colors.text,
+          }}
+          aria-live="polite"
+        >
+          <div className="mb-2 h-1 w-full rounded-full" style={pendingPulseStyle} />
+          <div className={`flex items-center justify-between gap-3 ${isMobile ? 'text-xs' : 'text-sm'}`}>
+            <div className="font-medium">正在更新{getPendingViewLabel(viewMode)}</div>
+            <div style={{ color: theme.colors.textSecondary }}>
+              列表保持可读，结果会在完成后自动替换。
+            </div>
+          </div>
+        </section>
+      )}
+
+      {recommendationSection && <div className="mb-5">{recommendationSection}</div>}
+
+      <TimelineDateNavigator
+        dateItems={dateItems}
+        activeDateAnchor={activeDateAnchor}
+        theme={theme}
+        className="mb-5"
+      />
+
+      <div
+        className="space-y-6 transition-opacity duration-200"
+        style={{ opacity: isPending ? 0.72 : 1 }}
+      >
         {timelineItems.map((item) => {
           if (item.type === 'date') {
             return (
-              <div key={item.key} className={`${item.data.isFirst ? 'mt-0' : 'mt-8'} mb-6`}>
-                <div className="flex items-center gap-3">
-                  <div
-                    className={`flex items-center justify-center ${isMobile ? 'w-8 h-8' : 'w-10 h-10'} rounded-full`}
-                    style={{
-                      backgroundColor: theme.mode === 'glass'
-                        ? 'rgba(255, 255, 255, 0.2)'
-                        : `${theme.colors.primary}20`,
-                      border: `2px solid ${theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.4)' : theme.colors.primary}`
-                    }}
-                  >
-                    <Calendar className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`}
-                      style={{ color: theme.mode === 'glass' ? 'white' : theme.colors.primary }} />
-                  </div>
-                  <div className="flex-1">
-                    <h2
-                      className={`${isMobile ? 'text-lg' : 'text-xl'} font-bold`}
-                      style={{
-                        color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-                        textShadow: theme.mode === 'glass' ? '0 2px 4px rgba(0, 0, 0, 0.3)' : 'none'
-                      }}
-                    >
-                      {item.data.dateGroup}
-                    </h2>
-                    <div
-                      className="h-px mt-2 opacity-20"
-                      style={{
-                        backgroundColor: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.5)' : theme.colors.border
-                      }}
-                    ></div>
-                  </div>
-                </div>
-              </div>
+              <TimelineDateDivider
+                key={item.key}
+                anchorId={item.data.anchorId}
+                entryCount={item.data.entryCount}
+                dateGroup={item.data.dateGroup}
+                isFirst={item.data.isFirst}
+                isMobile={isMobile}
+              />
             );
           }
 
           if (item.type === 'time') {
             return (
-              <div key={item.key} className="flex justify-center my-6">
-                <div
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${isMobile ? 'text-xs' : 'text-sm'}`}
-                  style={{
-                    backgroundColor: theme.mode === 'glass'
-                      ? 'rgba(255, 255, 255, 0.1)'
-                      : theme.colors.surface,
-                    border: `1px solid ${theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : theme.colors.border}`,
-                    color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary
-                  }}
-                >
-                  <Clock className="w-3 h-3" />
-                  <span>{item.data.timeDisplay.relative}</span>
-                </div>
-              </div>
+              <TimelineTimeDivider
+                key={item.key}
+                timeDisplay={item.data.timeDisplay}
+                isMobile={isMobile}
+              />
             );
           }
 
@@ -150,6 +201,9 @@ export function Timeline({ entries, onEdit, viewMode }: TimelineProps) {
                 <DiaryCard
                   entry={item.data}
                   onEdit={onEdit}
+                  onPreview={openPreview}
+                  searchQuery={searchQuery}
+                  isHighlighted={highlightEntryId === item.data.id}
                 />
               </div>
             );
@@ -160,54 +214,27 @@ export function Timeline({ entries, onEdit, viewMode }: TimelineProps) {
       </div>
 
       {visibleEntries.length === 0 && (
-        <div className={`text-center ${isMobile ? 'py-12' : 'py-16'}`}>
-          <div className={`${isMobile ? 'text-4xl' : 'text-6xl'} mb-4`}>📝</div>
-          <h3
-            className={`${isMobile ? 'text-lg' : 'text-xl'} font-semibold mb-2`}
-            style={{
-              color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-              textShadow: theme.mode === 'glass' ? '0 2px 4px rgba(0, 0, 0, 0.3)' : 'none'
-            }}
-          >
-            开始你的日记之旅
-          </h3>
-          <p
-            className={`${isMobile ? 'text-sm' : 'text-base'}`}
-            style={{
-              color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary,
-              textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none'
-            }}
-          >
-            记录生活中的美好时光，让回忆永远鲜活
-          </p>
-        </div>
+        <ContentStatePanel
+          icon="📝"
+          eyebrow="entries empty"
+          title="当前还没有可阅读的日记"
+          description="创建第一篇内容后，卡片列表会按时间顺序展示并支持继续筛选。"
+          isMobile={isMobile}
+        />
       )}
+
+      <EntryPreviewModal
+        entry={previewEntry}
+        isOpen={previewEntry !== null}
+        onClose={() => setPreviewIndex(null)}
+        onEdit={onEdit}
+        currentIndex={previewIndex}
+        totalCount={visibleEntries.length}
+        hasPrevious={previewIndex !== null && previewIndex > 0}
+        hasNext={previewIndex !== null && previewIndex < visibleEntries.length - 1}
+        onPrevious={() => setPreviewIndex((current) => (current === null ? current : Math.max(0, current - 1)))}
+        onNext={() => setPreviewIndex((current) => (current === null ? current : Math.min(visibleEntries.length - 1, current + 1)))}
+      />
     </div>
   );
 }
-
-function groupEntriesByDate(entries: DiaryEntry[]): Record<string, DiaryEntry[]> {
-  const groups: Record<string, DiaryEntry[]> = {};
-
-  entries.forEach((entry) => {
-    if (!entry.created_at) return;
-
-    const dateGroup = formatTimelineDate(entry.created_at);
-
-    if (!groups[dateGroup]) {
-      groups[dateGroup] = [];
-    }
-    groups[dateGroup].push(entry);
-  });
-
-  // Sort entries within each group by creation time (newest first)
-  Object.keys(groups).forEach(key => {
-    groups[key].sort((a, b) =>
-      new Date(normalizeTimeString(b.created_at!)).getTime() - new Date(normalizeTimeString(a.created_at!)).getTime()
-    );
-  });
-
-  return groups;
-}
-
-

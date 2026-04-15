@@ -1,32 +1,97 @@
-import { useState, useEffect } from 'react';
-import { Plus, BookOpen, RefreshCw, Settings, Download } from 'lucide-react';
-import { Timeline } from './components/Timeline';
-import { DiaryForm } from './components/DiaryForm';
-import { AdminPanel, AdminAuthProvider, useAdminAuth } from './components/AdminPanel';
-import { PasswordProtection } from './components/PasswordProtection';
-import { WelcomePage } from './components/WelcomePage';
-import { SearchBar } from './components/SearchBar';
-import { QuickFilters } from './components/QuickFilters';
-import { ExportModal } from './components/ExportModal';
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
+import { CloudOff, RefreshCw } from 'lucide-react';
+import { AdminAuthProvider, useAdminAuth } from './components/AdminAuthContext';
+import { ContentStatePanel } from './components/ContentStatePanel';
 import { ThemeProvider, useThemeContext } from './components/ThemeProvider';
-import { ThemeToggle } from './components/ThemeToggle';
-
-import { ViewModeToggle, ViewMode } from './components/ViewModeToggle';
+import { NotificationToast } from './components/NotificationToast';
+import { buildFilterMeta } from './components/filters/filterEntryMeta';
+import { ActiveBrowseSummary } from './components/app/ActiveBrowseSummary';
+import { AppBrowsePanel } from './components/app/AppBrowsePanel';
+import { AppHeader } from './components/app/AppHeader';
+import { getQuietButtonStyle } from './components/app/appShellStyles';
+import { useBrowseState } from './hooks/useBrowseState';
 import { useDiary } from './hooks/useDiary';
-import { useExportSettings } from './hooks/useExportSettings';
-import { useArchiveViewSettings } from './hooks/useArchiveViewSettings';
-import { DiaryEntry } from './types';
+import { useEntryEditorState } from './hooks/useEntryEditorState';
+import { useInterfaceSettings } from './hooks/useInterfaceSettings';
+import { useIsMobile } from './hooks/useIsMobile';
+import { useNotificationState } from './hooks/useNotificationState';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
 import { apiService } from './services/api';
-import { StatsTest } from './pages/StatsTest';
+import type { DiaryEntry } from './types/index.ts';
+import { clearOfflineEntrySnapshot, writeOfflineEntrySnapshot } from './utils/offlineEntrySnapshot.ts';
+import { debugError } from './utils/logger.ts';
+
+const Timeline = lazy(() =>
+  import('./components/Timeline').then((module) => ({ default: module.Timeline }))
+);
+const WelcomePage = lazy(() =>
+  import('./components/WelcomePage').then((module) => ({ default: module.WelcomePage }))
+);
+const DiaryForm = lazy(() =>
+  import('./components/DiaryForm').then((module) => ({ default: module.DiaryForm }))
+);
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then((module) => ({ default: module.AdminPanel }))
+);
+const PasswordProtection = lazy(() =>
+  import('./components/PasswordProtection').then((module) => ({ default: module.PasswordProtection }))
+);
+const ExportModal = lazy(() =>
+  import('./components/ExportModal').then((module) => ({ default: module.ExportModal }))
+);
 
 function AppContent() {
   const { theme } = useThemeContext();
-  const { isAdminAuthenticated } = useAdminAuth();
-  const { entries, loading, error, createEntry, updateEntry, refreshEntries } = useDiary();
-  const { settings: exportSettings, loading: exportSettingsLoading } = useExportSettings();
-  const { settings: archiveViewSettings, loading: archiveViewSettingsLoading } = useArchiveViewSettings();
-  const [isFormOpen, setIsFormOpen] = useState(false);
-  const [editingEntry, setEditingEntry] = useState<DiaryEntry | undefined>();
+  const { isAdminAuthenticated, setIsAdminAuthenticated } = useAdminAuth();
+  const isMobile = useIsMobile();
+  const isOnline = useOnlineStatus();
+  const {
+    entries,
+    loading,
+    error,
+    offlineSnapshotMeta,
+    createEntry,
+    updateEntry,
+    deleteEntry,
+    refreshEntries,
+  } = useDiary();
+  const {
+    settings: interfaceSettings,
+    loading: interfaceSettingsLoading,
+    refreshSettings: refreshInterfaceSettings,
+  } = useInterfaceSettings();
+  const {
+    closeForm,
+    completeSave,
+    editingEntry,
+    highlightEntryId,
+    isFormOpen,
+    openEditEntry,
+    openNewEntry,
+  } = useEntryEditorState();
+  const { hideNotification, notification, showNotification } = useNotificationState();
+  const {
+    accessibleEntries,
+    activeBrowse,
+    activeSearchQuery,
+    displayEntries,
+    handleClearActiveBrowsing,
+    handleClearBrowseChip,
+    handleClearQuickFilters,
+    handleClearSearch,
+    handleQuickFilterResults,
+    handleSearchResults,
+    isSearchPending,
+    onQuickFilterSummaryChange,
+    onSearchPendingChange,
+    onSearchQueryChange,
+    onSearchSummaryChange,
+    quickFilterClearRequest,
+    quickFilterResetSignal,
+    searchClearRequest,
+    searchResetSignal,
+  } = useBrowseState(entries, isAdminAuthenticated);
+
   const [isAdminPanelOpen, setIsAdminPanelOpen] = useState(false);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [showWelcomePage, setShowWelcomePage] = useState(true);
@@ -34,240 +99,233 @@ function AppContent() {
   const [showMainApp, setShowMainApp] = useState(false);
   const [isTransitioningToApp, setIsTransitioningToApp] = useState(false);
   const [passwordProtectionEnabled, setPasswordProtectionEnabled] = useState<boolean | null>(null);
-  const [searchResults, setSearchResults] = useState<DiaryEntry[] | null>(null);
-  const [filterResults, setFilterResults] = useState<DiaryEntry[] | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('timeline');
+  const [sessionLoading, setSessionLoading] = useState(true);
+  const [viewMode, setViewMode] = useState<'card' | 'timeline' | 'archive'>('timeline');
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
-  const [exportType, setExportType] = useState<string>('全部日记');
-  const [showStatsTest, setShowStatsTest] = useState(false);
 
-  // 从localStorage加载显示模式偏好（无记录时默认到时间轴并写入localStorage）
+  const enterAppTimeoutRef = useRef<number | null>(null);
+  const finishTransitionTimeoutRef = useRef<number | null>(null);
+
   useEffect(() => {
-    const saved = localStorage.getItem('diary_view_mode') as ViewMode | null;
+    const saved = localStorage.getItem('diary_view_mode') as 'card' | 'timeline' | 'archive' | null;
     if (saved && (saved === 'card' || saved === 'timeline' || saved === 'archive')) {
       setViewMode(saved);
-    } else {
-      setViewMode('timeline');
-      localStorage.setItem('diary_view_mode', 'timeline');
+      return;
     }
+
+    setViewMode('timeline');
+    localStorage.setItem('diary_view_mode', 'timeline');
   }, []);
 
-  // 当归纳视图被禁用时，自动切换到卡片模式
   useEffect(() => {
-    if (!archiveViewSettingsLoading && !archiveViewSettings.enabled && viewMode === 'archive') {
+    if (!interfaceSettingsLoading && !interfaceSettings.archiveView.enabled && viewMode === 'archive') {
       setViewMode('card');
       localStorage.setItem('diary_view_mode', 'card');
     }
-  }, [archiveViewSettings.enabled, archiveViewSettingsLoading, viewMode]);
+  }, [interfaceSettings.archiveView.enabled, interfaceSettingsLoading, viewMode]);
 
-  // 检测密码保护是否启用
   useEffect(() => {
-    const checkPasswordProtection = async () => {
-      try {
-        // 使用apiService来获取设置，这样会自动处理API失败的情况
-        const settings = await apiService.getAllSettings();
-        const isEnabled = settings.app_password_enabled === 'true';
-        const welcomePageEnabled = settings.welcome_page_enabled !== 'false'; // 默认启用
-        setPasswordProtectionEnabled(isEnabled);
+    let isCancelled = false;
 
-        // 如果密码保护未启用，设置为已认证
-        if (!isEnabled) {
-          setIsAuthenticated(true);
-        } else {
-          // 如果启用了密码保护，但之前已验证过，则恢复登录状态
-          const previouslyAuthenticated = localStorage.getItem('diary-app-authenticated') === 'true';
-          if (previouslyAuthenticated) {
-            setIsAuthenticated(true);
-          }
-        }
-
-        // 根据欢迎页面设置决定是否显示欢迎页面
-        if (welcomePageEnabled) {
-          setShowWelcomePage(true);
-        } else {
-          // 如果欢迎页面被禁用，直接显示主应用
-          setShowWelcomePage(false);
-          setShowMainApp(true);
-        }
-      } catch (error) {
-        console.error('检查密码保护设置失败:', error);
-        // 出错时检查localStorage中的设置
-        const localSettings = localStorage.getItem('diary-password-settings');
-        if (localSettings) {
-          try {
-            const parsed = JSON.parse(localSettings);
-            const isEnabled = parsed.enabled === true;
-            setPasswordProtectionEnabled(isEnabled);
-
-            if (!isEnabled) {
-              setIsAuthenticated(true);
-            } else {
-              // 本地启用了密码保护时，也尝试恢复之前的验证状态
-              const previouslyAuthenticated = localStorage.getItem('diary-app-authenticated') === 'true';
-              if (previouslyAuthenticated) {
-                setIsAuthenticated(true);
-              }
-            }
-            // 默认启用欢迎页面（如果没有设置的话）
-            setShowWelcomePage(true);
-          } catch (parseError) {
-            console.error('解析本地密码设置失败:', parseError);
-            // 解析失败时默认不启用密码保护
-            setPasswordProtectionEnabled(false);
-            setIsAuthenticated(true);
-            setShowWelcomePage(true);
-          }
-        } else {
-          // 没有本地设置时默认不启用密码保护，启用欢迎页面
-          setPasswordProtectionEnabled(false);
-          setIsAuthenticated(true);
-          setShowWelcomePage(true);
-        }
+    const unsubscribe = apiService.subscribeToSessionChanges((session) => {
+      if (isCancelled) {
+        return;
       }
-    };
 
-    checkPasswordProtection();
-  }, []);
-
-  // 调试信息
-  useEffect(() => {
-    console.log('App状态:', {
-      passwordProtectionEnabled,
-      isAuthenticated,
-      showWelcomePage
+      setIsAuthenticated(session.isAuthenticated);
+      setIsAdminAuthenticated(session.isAdminAuthenticated);
+      setSessionLoading(false);
     });
-  }, [passwordProtectionEnabled, isAuthenticated, showWelcomePage]);
 
-  // 测试功能：添加键盘快捷键来切换密码保护
-  useEffect(() => {
-    const handleKeyPress = (e: KeyboardEvent) => {
-      // Ctrl+Shift+P 切换密码保护
-      if (e.ctrlKey && e.shiftKey && e.key === 'P') {
-        e.preventDefault();
-        const currentSettings = localStorage.getItem('diary-password-settings');
-        let newSettings;
-
-        if (currentSettings) {
-          try {
-            const parsed = JSON.parse(currentSettings);
-            newSettings = {
-              enabled: !parsed.enabled,
-              password: parsed.password || 'diary123'
-            };
-          } catch {
-            newSettings = { enabled: true, password: 'diary123' };
-          }
-        } else {
-          newSettings = { enabled: true, password: 'diary123' };
+    const loadSession = async () => {
+      try {
+        const session = await apiService.getSession();
+        if (isCancelled) {
+          return;
         }
 
-        localStorage.setItem('diary-password-settings', JSON.stringify(newSettings));
+        setIsAuthenticated(session.isAuthenticated);
+        setIsAdminAuthenticated(session.isAdminAuthenticated);
+      } catch (sessionError) {
+        if (isCancelled) {
+          return;
+        }
 
-        // 重新加载页面以应用新设置
-        window.location.reload();
-
-        console.log(`密码保护已${newSettings.enabled ? '启用' : '禁用'}，密码: ${newSettings.password}`);
+        debugError('获取会话状态失败:', sessionError);
+        setIsAuthenticated(false);
+        setIsAdminAuthenticated(false);
+      } finally {
+        if (!isCancelled) {
+          setSessionLoading(false);
+        }
       }
     };
 
-    window.addEventListener('keydown', handleKeyPress);
-    return () => window.removeEventListener('keydown', handleKeyPress);
+    void loadSession();
+
+    return () => {
+      isCancelled = true;
+      unsubscribe();
+    };
+  }, [setIsAdminAuthenticated]);
+
+  useEffect(() => {
+    if (interfaceSettingsLoading || sessionLoading) {
+      return;
+    }
+
+    const isEnabled = interfaceSettings.passwordProtection.enabled;
+    const welcomePageEnabled = interfaceSettings.welcomePage.enabled;
+
+    setPasswordProtectionEnabled(isEnabled);
+
+    if (!isEnabled) {
+      setIsAuthenticated(true);
+    }
+
+    if (welcomePageEnabled) {
+      setShowWelcomePage(true);
+      setShowPasswordPage(false);
+      setShowMainApp(false);
+      return;
+    }
+
+    setShowWelcomePage(false);
+
+    if (isEnabled && !isAuthenticated) {
+      setShowPasswordPage(true);
+      setShowMainApp(false);
+      return;
+    }
+
+    setShowPasswordPage(false);
+    setShowMainApp(true);
+  }, [interfaceSettings, interfaceSettingsLoading, isAuthenticated, sessionLoading]);
+
+  useEffect(() => {
+    return () => {
+      if (enterAppTimeoutRef.current !== null) {
+        window.clearTimeout(enterAppTimeoutRef.current);
+      }
+      if (finishTransitionTimeoutRef.current !== null) {
+        window.clearTimeout(finishTransitionTimeoutRef.current);
+      }
+    };
   }, []);
 
-  // 保存显示模式偏好到localStorage
-  const handleViewModeChange = (mode: ViewMode) => {
+  useEffect(() => {
+    if (isAdminAuthenticated) {
+      clearOfflineEntrySnapshot();
+      return;
+    }
+
+    if (loading || error) {
+      return;
+    }
+
+    writeOfflineEntrySnapshot(accessibleEntries);
+  }, [accessibleEntries, error, isAdminAuthenticated, loading]);
+
+  const handleViewModeChange = (mode: 'card' | 'timeline' | 'archive') => {
     setViewMode(mode);
     localStorage.setItem('diary_view_mode', mode);
   };
-  const [isSearching, setIsSearching] = useState(false);
-  const [isFiltering, setIsFiltering] = useState(false);
 
   const handleSave = async (entryData: Omit<DiaryEntry, 'id' | 'created_at' | 'updated_at'>) => {
     try {
       if (editingEntry) {
         await updateEntry(editingEntry.id!, entryData);
-      } else {
-        await createEntry(entryData);
+        showNotification('日记已保存', 'success');
+        completeSave(editingEntry.id);
+        return;
       }
-      // 先关闭对话框，然后清理状态
-      setIsFormOpen(false);
-      // 延迟清理editingEntry，给组件时间完成清理
-      setTimeout(() => {
-        setEditingEntry(undefined);
-      }, 100);
-    } catch (err) {
-      alert(err instanceof Error ? err.message : '操作失败');
+
+      const createdEntry = await createEntry(entryData);
+      showNotification('新日记已创建', 'success');
+      completeSave(createdEntry.id);
+    } catch (saveError) {
+      showNotification(saveError instanceof Error ? saveError.message : '操作失败', 'error');
     }
   };
 
-  const handleEdit = (entry: DiaryEntry) => {
-    setEditingEntry(entry);
-    setIsFormOpen(true);
-  };
-
-
-
-  const handleCancel = () => {
-    // 先关闭对话框，然后清理状态
-    setIsFormOpen(false);
-    // 延迟清理editingEntry，给组件时间完成清理
-    setTimeout(() => {
-      setEditingEntry(undefined);
-    }, 100);
-  };
-
-  const handleSearchResults = (results: DiaryEntry[]) => {
-    setSearchResults(results);
-    setIsSearching(true);
-    // 清除过滤结果，避免冲突
-    setFilterResults(null);
-    setIsFiltering(false);
-  };
-
-  const handleClearSearch = () => {
-    setSearchResults(null);
-    setIsSearching(false);
-  };
-
-  const handleFilterResults = (results: DiaryEntry[]) => {
-    setFilterResults(results);
-    setIsFiltering(true);
-    // 清除搜索结果，避免冲突
-    setSearchResults(null);
-    setIsSearching(false);
-  };
-
-  const handleClearFilter = () => {
-    setFilterResults(null);
-    setIsFiltering(false);
-  };
-
-  const handleNewEntry = () => {
-    setEditingEntry(undefined);
-    setIsFormOpen(true);
-  };
-
-  // 打开导出模态框
-  const handleOpenExportModal = () => {
-    // 确定导出类型
-    let type = '全部日记';
-    if (searchResults) {
-      type = '搜索结果';
-    } else if (filterResults) {
-      type = '筛选结果';
+  const enterMainApp = () => {
+    if (enterAppTimeoutRef.current !== null) {
+      window.clearTimeout(enterAppTimeoutRef.current);
+    }
+    if (finishTransitionTimeoutRef.current !== null) {
+      window.clearTimeout(finishTransitionTimeoutRef.current);
     }
 
-    setExportType(type);
-    setIsExportModalOpen(true);
+    setIsTransitioningToApp(true);
+    enterAppTimeoutRef.current = window.setTimeout(() => {
+      setShowWelcomePage(false);
+      setShowMainApp(true);
+      enterAppTimeoutRef.current = null;
+
+      finishTransitionTimeoutRef.current = window.setTimeout(() => {
+        setIsTransitioningToApp(false);
+        finishTransitionTimeoutRef.current = null;
+      }, 700);
+    }, 420);
   };
 
-  // 如果密码保护状态还未确定，显示加载状态
-  if (passwordProtectionEnabled === null) {
+  const handleSessionChange = (session: { isAuthenticated: boolean; isAdminAuthenticated: boolean }) => {
+    setIsAuthenticated(session.isAuthenticated);
+    setIsAdminAuthenticated(session.isAdminAuthenticated);
+  };
+
+  const accessibleEntriesCount = accessibleEntries.length;
+  const filterMeta = useMemo(
+    () => buildFilterMeta(entries, isAdminAuthenticated),
+    [entries, isAdminAuthenticated]
+  );
+  const quietButtonStyle = getQuietButtonStyle(theme);
+  const canExportCurrentResults =
+    isAdminAuthenticated &&
+    !interfaceSettingsLoading &&
+    interfaceSettings.export.enabled &&
+    displayEntries.length > 0;
+  const suspenseFallback = (
+    <ContentStatePanel
+      icon="⌛"
+      eyebrow="module loading"
+      title="正在加载模块..."
+      description="界面组件正在按需准备。"
+      isMobile={isMobile}
+      surface="muted"
+      density="compact"
+      align="left"
+    />
+  );
+  const shellFallback = (
+    <div className="flex min-h-screen items-center justify-center px-4" style={{ backgroundColor: theme.colors.background }}>
+      <div className="w-full max-w-md">
+        <ContentStatePanel
+          icon="⌛"
+          eyebrow="app loading"
+          title="正在准备界面..."
+          description="欢迎页和主应用壳层正在加载。"
+          isMobile={isMobile}
+          density="compact"
+        />
+      </div>
+    </div>
+  );
+
+  if (passwordProtectionEnabled === null || sessionLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <p>正在加载...</p>
+      <div
+        className="flex min-h-screen items-center justify-center px-4"
+        style={{ backgroundColor: theme.colors.background }}
+      >
+        <div className="w-full max-w-md">
+          <ContentStatePanel
+            icon={<RefreshCw className="h-6 w-6 animate-spin" />}
+            eyebrow="session loading"
+            title="正在整理日记空间..."
+            description="会话和访问控制状态正在确认，稍后自动进入对应页面。"
+            isMobile={isMobile}
+          />
         </div>
       </div>
     );
@@ -275,58 +333,43 @@ function AppContent() {
 
   return (
     <>
-      {/* 欢迎页面 - 始终首先显示，密码保护时作为背景保持可见 */}
+      <a href="#main-content" className="skip-link">
+        跳到正文内容
+      </a>
+
       {(showWelcomePage || showPasswordPage) && !showMainApp && (
-        <WelcomePage
-          hasPasswordProtection={passwordProtectionEnabled}
-          isBackground={showPasswordPage} // 当显示密码页面时，欢迎页面作为背景
-          isTransitioningToApp={isTransitioningToApp} // 传递过渡状态
-          onEnterApp={() => {
-            if (passwordProtectionEnabled && !isAuthenticated) {
-              setShowPasswordPage(true);
-              // 不隐藏欢迎页面，让它作为背景
-            } else {
-              // 开始平缓的过渡到主应用
-              setIsTransitioningToApp(true);
-              setTimeout(() => {
-                setShowWelcomePage(false);
-                setShowMainApp(true);
-                // 延迟一点再停止过渡状态，确保动画完成
-                setTimeout(() => {
-                  setIsTransitioningToApp(false);
-                }, 800);
-              }, 600); // 600ms后开始显示主应用
-            }
-          }}
-        />
+        <Suspense fallback={shellFallback}>
+          <WelcomePage
+            hasPasswordProtection={passwordProtectionEnabled}
+            isBackground={showPasswordPage}
+            isTransitioningToApp={isTransitioningToApp}
+            onEnterApp={() => {
+              if (passwordProtectionEnabled && !isAuthenticated) {
+                setShowPasswordPage(true);
+                return;
+              }
+
+              enterMainApp();
+            }}
+          />
+        </Suspense>
       )}
 
-      {/* 密码保护页面 - 在欢迎页面之上显示，背景是透明的 */}
       {showPasswordPage && passwordProtectionEnabled && !isAuthenticated && !showMainApp && (
-        <PasswordProtection onAuthenticated={() => {
-          setIsAuthenticated(true);
-          setShowPasswordPage(false);
-          // 开始平缓的过渡到主应用
-          setIsTransitioningToApp(true);
-          setTimeout(() => {
-            setShowWelcomePage(false);
-            setShowMainApp(true);
-            // 延迟一点再停止过渡状态，确保动画完成
-            setTimeout(() => {
-              setIsTransitioningToApp(false);
-            }, 800);
-          }, 600); // 600ms后开始显示主应用
-        }} />
+        <Suspense fallback={suspenseFallback}>
+          <PasswordProtection
+            passwordSettings={{ enabled: passwordProtectionEnabled }}
+            onAuthenticated={() => {
+              setIsAuthenticated(true);
+              setShowPasswordPage(false);
+              enterMainApp();
+            }}
+          />
+        </Suspense>
       )}
 
       <div
-        className={`app-transition ${
-          theme.mode === 'glass' ? 'blog-guide-gradient' : ''
-        } ${
-          // 显示主应用时才显示，否则隐藏
-          showMainApp ? 'opacity-100' : 'opacity-0 pointer-events-none'
-        } ${
-          // 添加淡入动画类
+        className={`app-transition ${showMainApp ? 'opacity-100' : 'pointer-events-none opacity-0'} ${
           isTransitioningToApp ? 'main-app-enter' : ''
         }`}
         style={{
@@ -336,320 +379,177 @@ function AppContent() {
           transition: isTransitioningToApp
             ? 'all 1.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)'
             : 'all 0.3s ease',
-          // 当不显示主应用时，完全移除对布局的影响
           display: showMainApp ? 'block' : 'none',
-          minHeight: '100vh' // 确保主应用容器至少占满整个视口高度
+          minHeight: '100vh',
         }}
       >
-      {/* Header */}
-      <header
-        className={`shadow-lg border-b ${theme.effects.blur}`}
-        style={{
-          backgroundColor: theme.mode === 'glass' ? undefined : theme.colors.surface,
-          borderBottomColor: theme.mode === 'glass' ? undefined : theme.colors.border,
-        }}
-      >
-        <div className="max-w-6xl mx-auto px-4 py-3 md:py-6">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center gap-2 md:gap-4">
-              <div
-                className="p-1.5 md:p-2 rounded-lg md:rounded-xl"
-                style={{
-                  backgroundColor: theme.mode === 'glass'
-                    ? 'rgba(255, 255, 255, 0.2)'
-                    : `${theme.colors.primary}20`
-                }}
-              >
-                <BookOpen
-                  className="w-6 h-6 md:w-8 md:h-8"
-                  style={{
-                    color: theme.mode === 'glass' ? 'white' : theme.colors.primary
-                  }}
-                />
-              </div>
-              <div className="min-w-0">
-                <h1
-                  className={`text-xl md:text-3xl font-bold ${theme.mode === 'glass' ? 'text-white' : ''}`}
-                  style={{
-                    color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-                    textShadow: theme.mode === 'glass' ? '0 4px 8px rgba(0, 0, 0, 0.3)' : 'none'
-                  }}
-                >
-                  我的日记
-                </h1>
-                <p
-                  className={`text-xs md:text-sm ${theme.mode === 'glass' ? 'text-white' : ''} hidden sm:block`}
-                  style={{
-                    color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary,
-                    textShadow: theme.mode === 'glass' ? '0 2px 4px rgba(0, 0, 0, 0.3)' : 'none'
-                  }}
-                >
-                  记录生活，留住美好
-                </p>
-              </div>
-            </div>
+        <AppHeader
+          isAdminAuthenticated={isAdminAuthenticated}
+          isAdminPanelOpen={isAdminPanelOpen}
+          loading={loading}
+          onOpenAdminPanel={() => setIsAdminPanelOpen(true)}
+          onOpenNewEntry={openNewEntry}
+          onRefreshEntries={refreshEntries}
+        />
 
-            <div className="flex items-center gap-1 md:gap-3">
-              {/* 主题切换按钮 - 桌面端和移动端都显示 */}
-              <div className="block">
-                <ThemeToggle />
-              </div>
-
-              <button
-                onClick={() => setIsAdminPanelOpen(true)}
-                className="p-2 md:p-3 rounded-full transition-all duration-200 hover:scale-110"
-                style={{
-                  backgroundColor: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : theme.colors.surface,
-                  color: theme.mode === 'glass' ? 'white' : theme.colors.textSecondary,
-                  border: theme.mode === 'glass' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid ${theme.colors.border}`
-                }}
-                title="管理员面板"
-              >
-                <Settings className="w-4 h-4 md:w-5 md:h-5" />
-              </button>
-
-              {/* 统计测试按钮 - 仅在开发环境显示 */}
-              {import.meta.env.DEV && (
+        <main
+          id="main-content"
+          className="mx-auto min-h-screen max-w-6xl px-4 py-5 md:px-6 md:py-8"
+          style={{ paddingBottom: isMobile ? 'calc(1.25rem + var(--safe-area-bottom))' : undefined }}
+          aria-busy={loading || isSearchPending}
+        >
+          {error && (
+            <ContentStatePanel
+              icon="!"
+              eyebrow="request error"
+              title="日记内容加载失败"
+              description={error}
+              isMobile={isMobile}
+              className="mb-6"
+              action={(
                 <button
-                  onClick={() => setShowStatsTest(!showStatsTest)}
-                  className="p-2 md:p-3 rounded-full transition-all duration-200 hover:scale-110"
-                  style={{
-                    backgroundColor: showStatsTest ? theme.colors.primary : (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : theme.colors.surface),
-                    color: showStatsTest ? 'white' : (theme.mode === 'glass' ? 'white' : theme.colors.textSecondary),
-                    border: theme.mode === 'glass' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid ${theme.colors.border}`
-                  }}
-                  title="统计API测试"
+                  type="button"
+                  onClick={refreshEntries}
+                  className="rounded-xl px-3 py-2 text-sm transition-transform duration-200 hover:-translate-y-0.5"
+                  style={quietButtonStyle}
                 >
-                  📊
+                  重新获取内容
                 </button>
               )}
-
-              <button
-                onClick={refreshEntries}
-                disabled={loading}
-                className="p-2 md:p-3 rounded-full transition-all duration-200 hover:scale-110 disabled:opacity-50"
-                style={{
-                  backgroundColor: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : theme.colors.surface,
-                  color: theme.mode === 'glass' ? 'white' : theme.colors.textSecondary,
-                  border: theme.mode === 'glass' ? '1px solid rgba(255, 255, 255, 0.3)' : `1px solid ${theme.colors.border}`
-                }}
-                title="刷新"
-              >
-                <RefreshCw className={`w-4 h-4 md:w-5 md:h-5 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-
-              {isAdminAuthenticated && (
-                <button
-                  onClick={handleNewEntry}
-                  className="flex items-center gap-1 md:gap-2 px-3 py-2 md:px-6 md:py-3 rounded-lg md:rounded-xl font-bold transition-all duration-200 hover:scale-105 shadow-lg"
-                  style={{
-                    background: theme.mode === 'glass'
-                      ? 'linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%)'
-                      : theme.colors.primary,
-                    color: 'white',
-                    border: theme.mode === 'glass' ? '1px solid rgba(255, 255, 255, 0.3)' : 'none',
-                    backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none',
-                    boxShadow: theme.mode === 'glass'
-                      ? '0 8px 32px rgba(168, 85, 247, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                      : undefined,
-                    textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none'
-                  }}
-                >
-                  <Plus className="w-4 h-4 md:w-5 md:h-5" />
-                  <span className="text-sm md:text-base">写日记</span>
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
-      </header>
-
-
-
-      {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-4 md:py-8 min-h-screen">
-        {error && (
-          <div
-            className="mb-6 p-4 rounded-xl border"
-            style={{
-              backgroundColor: `${theme.colors.accent}20`,
-              borderColor: theme.colors.accent,
-              color: theme.colors.text
-            }}
-          >
-            <p>{error}</p>
-            <button
-              onClick={refreshEntries}
-              className="mt-2 underline hover:no-underline transition-colors"
-              style={{ color: theme.colors.accent }}
-            >
-              重试
-            </button>
-          </div>
-        )}
-
-        {loading && entries.length === 0 ? (
-          <div className="flex justify-center items-center py-16">
-            <div className="text-center">
-              <RefreshCw
-                className="w-12 h-12 animate-spin mx-auto mb-4"
-                style={{ color: theme.colors.primary }}
-              />
-              <p
-                className="text-lg"
-                style={{ color: theme.colors.textSecondary }}
-              >
-                加载中...
-              </p>
-            </div>
-          </div>
-        ) : (
-          <div className="space-y-6">
-            {/* 搜索栏和显示模式切换 */}
-            <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-              <div className="flex-1 w-full sm:w-auto">
-                <SearchBar
-                  entries={entries}
-                  onSearchResults={handleSearchResults}
-                  onClearSearch={handleClearSearch}
-                />
-              </div>
-              <ViewModeToggle
-                viewMode={viewMode}
-                onViewModeChange={handleViewModeChange}
-              />
-            </div>
-
-            {/* 快速过滤 */}
-            <QuickFilters
-              entries={entries}
-              onFilterResults={handleFilterResults}
-              onClearFilter={handleClearFilter}
             />
+          )}
 
-            {/* 搜索结果提示 */}
-            {isSearching && (
-              <div className="flex items-center justify-between p-3 rounded-lg" style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(255, 255, 255, 0.1)'
-                  : theme.colors.surface,
-                border: `1px solid ${theme.colors.border}`,
-                color: theme.colors.text
-              }}>
-                <span>
-                  {searchResults && searchResults.length > 0
-                    ? `找到 ${searchResults.length} 条匹配的日记`
-                    : '没有找到匹配的日记'
-                  }
-                </span>
-                {isAdminAuthenticated && !exportSettingsLoading && exportSettings.enabled && searchResults && searchResults.length > 0 && (
-                  <button
-                    onClick={handleOpenExportModal}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm"
-                    style={{
-                      backgroundColor: theme.colors.primary,
-                      color: 'white'
-                    }}
-                  >
-                    <Download className="w-4 h-4" />
-                    导出搜索结果
-                  </button>
-                )}
-              </div>
-            )}
+          {offlineSnapshotMeta.used && (
+            <ContentStatePanel
+              icon={<CloudOff className="h-5 w-5" />}
+              eyebrow={isOnline ? 'offline snapshot' : 'offline reading'}
+              title={isOnline ? '当前显示最近保存的离线快照' : '当前处于离线阅读模式'}
+              description={
+                offlineSnapshotMeta.savedAt
+                  ? `最近一次可用公开内容保存于 ${new Date(offlineSnapshotMeta.savedAt).toLocaleString('zh-CN')}，恢复联网后刷新即可同步最新内容。`
+                  : '最近一次公开内容已保存在本机，恢复联网后刷新即可同步最新内容。'
+              }
+              isMobile={isMobile}
+              className="mb-6"
+              surface="muted"
+              density="compact"
+              align="left"
+            />
+          )}
 
-            {/* 过滤结果提示 */}
-            {isFiltering && (
-              <div className="flex items-center justify-between p-3 rounded-lg" style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(255, 255, 255, 0.1)'
-                  : theme.colors.surface,
-                border: `1px solid ${theme.colors.border}`,
-                color: theme.colors.text
-              }}>
-                <span>
-                  {filterResults && filterResults.length > 0
-                    ? `筛选出 ${filterResults.length} 条日记`
-                    : '没有符合条件的日记'
-                  }
-                </span>
-                {isAdminAuthenticated && !exportSettingsLoading && exportSettings.enabled && filterResults && filterResults.length > 0 && (
-                  <button
-                    onClick={handleOpenExportModal}
-                    className="flex items-center gap-2 px-3 py-1.5 rounded-md transition-colors text-sm"
-                    style={{
-                      backgroundColor: theme.colors.primary,
-                      color: 'white'
-                    }}
-                  >
-                    <Download className="w-4 h-4" />
-                    导出筛选结果
-                  </button>
-                )}
-              </div>
-            )}
-
-            {/* 导出全部日记按钮 - 只在没有搜索或筛选时显示 */}
-            {isAdminAuthenticated && !exportSettingsLoading && exportSettings.enabled && !isSearching && !isFiltering && entries.length > 0 && (
-              <div className="flex justify-end mb-4">
-                <button
-                  onClick={handleOpenExportModal}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg transition-colors"
-                  style={{
-                    backgroundColor: theme.mode === 'glass'
-                      ? 'rgba(255, 255, 255, 0.1)'
-                      : theme.colors.surface,
-                    border: `1px solid ${theme.colors.border}`,
-                    color: theme.colors.text
-                  }}
-                >
-                  <Download className="w-4 h-4" />
-                  导出全部日记
-                </button>
-              </div>
-            )}
-
-            {/* 统计测试页面 */}
-            {showStatsTest ? (
-              <StatsTest />
-            ) : (
-              <Timeline
-                entries={searchResults || filterResults || entries}
-                onEdit={handleEdit}
+          {loading && entries.length === 0 ? (
+            <ContentStatePanel
+              icon={<RefreshCw className="h-7 w-7 animate-spin" />}
+              eyebrow="content loading"
+              title="正在加载日记内容..."
+              description="会话、界面设置和条目数据正在同步，完成后会直接进入阅读区。"
+              isMobile={isMobile}
+            />
+          ) : (
+            <div className="space-y-6">
+              <AppBrowsePanel
+                entries={entries}
+                filterMeta={filterMeta}
                 viewMode={viewMode}
+                activeBrowse={activeBrowse}
+                accessibleEntriesCount={accessibleEntriesCount}
+                displayEntriesCount={displayEntries.length}
+                interfaceSettings={interfaceSettings}
+                interfaceSettingsLoading={interfaceSettingsLoading}
+                isAdminAuthenticated={isAdminAuthenticated}
+                isSearchPending={isSearchPending}
+                onClearActiveBrowsing={handleClearActiveBrowsing}
+                onClearQuickFilters={handleClearQuickFilters}
+                onClearSearch={handleClearSearch}
+                onOpenExportModal={() => setIsExportModalOpen(true)}
+                onQuickFilterResults={handleQuickFilterResults}
+                onQuickFilterSummaryChange={onQuickFilterSummaryChange}
+                onSearchPendingChange={onSearchPendingChange}
+                onSearchQueryChange={onSearchQueryChange}
+                onSearchResults={handleSearchResults}
+                onSearchSummaryChange={onSearchSummaryChange}
+                onViewModeChange={handleViewModeChange}
+                quickFilterClearRequest={quickFilterClearRequest}
+                quickFilterResetSignal={quickFilterResetSignal}
+                searchClearRequest={searchClearRequest}
+                searchResetSignal={searchResetSignal}
               />
-            )}
-          </div>
+
+              <ActiveBrowseSummary
+                activeBrowse={activeBrowse}
+                canExport={canExportCurrentResults && Boolean(activeBrowse.mode)}
+                isSearchPending={isSearchPending}
+                onClearBrowseChip={handleClearBrowseChip}
+                onOpenExportModal={() => setIsExportModalOpen(true)}
+              />
+
+              <div
+                className="transition-all duration-200"
+                style={{
+                  opacity: isSearchPending ? 0.72 : 1,
+                  transform: isSearchPending ? 'translateY(4px)' : 'translateY(0px)',
+                }}
+              >
+                <Suspense fallback={suspenseFallback}>
+                  <Timeline
+                    entries={displayEntries}
+                    onEdit={openEditEntry}
+                    searchQuery={activeSearchQuery}
+                    viewMode={viewMode}
+                    highlightEntryId={highlightEntryId}
+                    isPending={isSearchPending}
+                  />
+                </Suspense>
+              </div>
+            </div>
+          )}
+        </main>
+
+        {isFormOpen && (
+          <Suspense fallback={null}>
+            <DiaryForm
+              key={`diary-form-${editingEntry?.id || 'new'}-${isFormOpen}`}
+              entry={editingEntry}
+              onSave={handleSave}
+              onCancel={closeForm}
+              isOpen={isFormOpen}
+            />
+          </Suspense>
         )}
-      </main>
 
-      {/* Form Modal */}
-      <DiaryForm
-        key={`diary-form-${editingEntry?.id || 'new'}-${isFormOpen}`}
-        entry={editingEntry}
-        onSave={handleSave}
-        onCancel={handleCancel}
-        isOpen={isFormOpen}
-      />
+        {isAdminPanelOpen && (
+          <Suspense fallback={null}>
+            <AdminPanel
+              isOpen={isAdminPanelOpen}
+              onClose={() => setIsAdminPanelOpen(false)}
+              entries={entries}
+              onEntriesUpdate={refreshEntries}
+              onSessionChange={handleSessionChange}
+              onInterfaceSettingsChange={refreshInterfaceSettings}
+              onDeleteEntry={deleteEntry}
+              onEdit={openEditEntry}
+            />
+          </Suspense>
+        )}
 
-      {/* Admin Panel */}
-      <AdminPanel
-        isOpen={isAdminPanelOpen}
-        onClose={() => setIsAdminPanelOpen(false)}
-        entries={entries}
-        onEntriesUpdate={refreshEntries}
-        onEdit={handleEdit}
-      />
+        {isExportModalOpen && (
+          <Suspense fallback={null}>
+            <ExportModal
+              isOpen={isExportModalOpen}
+              onClose={() => setIsExportModalOpen(false)}
+              entries={displayEntries}
+              exportType={activeBrowse.exportType}
+            />
+          </Suspense>
+        )}
 
-      {/* Export Modal */}
-      <ExportModal
-        isOpen={isExportModalOpen}
-        onClose={() => setIsExportModalOpen(false)}
-        entries={searchResults || filterResults || entries}
-        exportType={exportType}
-      />
-
-
+        {notification.visible && (
+          <NotificationToast
+            message={notification.message}
+            type={notification.type}
+            onClose={hideNotification}
+          />
+        )}
       </div>
     </>
   );
