@@ -92,35 +92,6 @@ export function formatTimelineDate(dateString: string): string {
   }
 }
 
-export function getTimelinePosition(dateString: string, entries: any[]): number {
-  // 计算在时间线上的相对位置 (0-100%)
-  const date = new Date(normalizeTimeString(dateString));
-  const dates = entries.map(entry => new Date(normalizeTimeString(entry.created_at!)));
-  const minDate = new Date(Math.min(...dates.map(d => d.getTime())));
-  const maxDate = new Date(Math.max(...dates.map(d => d.getTime())));
-
-  if (minDate.getTime() === maxDate.getTime()) {
-    return 50; // 只有一个条目时居中
-  }
-
-  const totalRange = maxDate.getTime() - minDate.getTime();
-  const currentPosition = date.getTime() - minDate.getTime();
-
-  return (currentPosition / totalRange) * 100;
-}
-
-/**
- * 格式化日期为本地化的日期字符串
- */
-export function formatLocalDate(dateString: string): string {
-  const date = new Date(normalizeTimeString(dateString));
-  return date.toLocaleDateString('zh-CN', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit'
-  });
-}
-
 /**
  * 格式化完整的日期时间显示（包含具体时间）
  */
@@ -128,5 +99,3 @@ export function formatFullDateTime(dateString: string): string {
   const date = new Date(normalizeTimeString(dateString));
   return format(date, 'yyyy年MM月dd日 HH:mm', { locale: zhCN });
 }
-
-

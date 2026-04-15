@@ -1,0 +1,23 @@
+{
+  "name": "我的日记",
+  "short_name": "日记",
+  "description": "轻量、简洁，适合手机浏览器独立窗口模式使用的日记应用。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "portrait-primary",
+  "background_color": "#f3eee2",
+  "theme_color": "#f3eee2",
+  "categories": ["productivity", "lifestyle", "utilities"],
+  "prefer_related_applications": false,
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

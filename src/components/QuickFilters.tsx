@@ -1,42 +1,54 @@
-import { useState, useEffect, useRef } from 'react';
-import { Tag, Calendar, X, ChevronDown } from 'lucide-react';
+import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { Tag, Calendar, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
-import { useAdminAuth } from './AdminPanel';
-import { useQuickFiltersSettings } from '../hooks/useQuickFiltersSettings';
-import { DiaryEntry } from '../types';
-import { normalizeTimeString } from '../utils/timeUtils';
+import { useAdminAuth } from './AdminAuthContext';
+import { useIsMobile } from '../hooks/useIsMobile';
+import type { DiaryEntry } from '../types/index.ts';
+import { ActiveFilterChip, QuickFilterDropdown } from './filters/QuickFilterControls';
+import { normalizeTimeString } from '../utils/timeUtils.ts';
 
 interface QuickFiltersProps {
   entries: DiaryEntry[];
+  enabled?: boolean;
+  availableTags: string[];
+  availableYears: string[];
+  availableMonths: string[];
+  availableMonthsByYear: Record<string, string[]>;
+  untaggedEntryCount: number;
   onFilterResults: (results: DiaryEntry[]) => void;
   onClearFilter: () => void;
+  onFilterSummaryChange?: (items: Array<{ id: string; label: string }>) => void;
+  clearRequest?: { targetId: string; nonce: number } | null;
+  resetSignal?: number;
 }
 
-export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickFiltersProps) {
+export function QuickFilters({
+  entries,
+  enabled = true,
+  availableTags,
+  availableYears,
+  availableMonths,
+  availableMonthsByYear,
+  untaggedEntryCount,
+  onFilterResults,
+  onClearFilter,
+  onFilterSummaryChange,
+  clearRequest = null,
+  resetSignal = 0,
+}: QuickFiltersProps) {
   const { theme } = useThemeContext();
   const { isAdminAuthenticated } = useAdminAuth();
-  const { settings: quickFiltersSettings, loading: settingsLoading } = useQuickFiltersSettings();
+  const isMobile = useIsMobile();
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState('');
   const [selectedMonth, setSelectedMonth] = useState('');
-  const [isMobile, setIsMobile] = useState(false);
   const [isTagDropdownOpen, setIsTagDropdownOpen] = useState(false);
   const [isYearDropdownOpen, setIsYearDropdownOpen] = useState(false);
   const [isMonthDropdownOpen, setIsMonthDropdownOpen] = useState(false);
+  const deferredEntries = useDeferredValue(entries);
   const tagDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
-
-  // 检测是否为移动设备
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
-
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
 
   // 点击外部关闭下拉框
   useEffect(() => {
@@ -51,49 +63,6 @@ export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickF
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // 获取所有可用的标签
-  const getAllTags = () => {
-    const tagSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.tags) {
-        entry.tags.forEach(tag => tagSet.add(tag));
-      }
-    });
-    return Array.from(tagSet).sort();
-  };
-
-  // 获取无标签日记的数量
-  const getNoTagsCount = () => {
-    return entries.filter(entry => !entry.hidden && (!entry.tags || entry.tags.length === 0)).length;
-  };
-
-  // 获取所有可用的年份
-  const getAllYears = () => {
-    const yearSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.created_at) {
-        const year = new Date(normalizeTimeString(entry.created_at)).getFullYear().toString();
-        yearSet.add(year);
-      }
-    });
-    return Array.from(yearSet).sort((a, b) => parseInt(b) - parseInt(a));
-  };
-
-  // 获取所有可用的月份（不依赖年份）
-  const getAllMonths = () => {
-    const monthSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.created_at) {
-        const entryDate = new Date(normalizeTimeString(entry.created_at));
-        const month = (entryDate.getMonth() + 1).toString().padStart(2, '0');
-        monthSet.add(month);
-      }
-    });
-    return Array.from(monthSet).sort((a, b) => parseInt(b) - parseInt(a));
-  };
-
-  // 过去：按年份筛选月份的辅助函数已移除，月份列表不再依赖年份
-
   // 执行过滤
   const performFilter = (tags: string[], year: string, month: string) => {
     if (tags.length === 0 && !year && !month) {
@@ -101,10 +70,7 @@ export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickF
       return;
     }
 
-    const results = entries.filter(entry => {
-      // 跳过隐藏的日记
-      if (entry.hidden) return false;
-
+    const results = deferredEntries.filter(entry => {
       // 标签过滤（多标签支持）
       if (tags.length > 0) {
         let tagMatched = false;
@@ -156,7 +122,51 @@ export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickF
   // 监听过滤条件变化
   useEffect(() => {
     performFilter(selectedTags, selectedYear, selectedMonth);
-  }, [selectedTags, selectedYear, selectedMonth, entries]);
+  }, [deferredEntries, selectedMonth, selectedTags, selectedYear]);
+
+  useEffect(() => {
+    const items = [
+      ...selectedTags.map((tag) => ({
+        id: `tag:${tag}`,
+        label: tag === '__no_tags__' ? '标签：无标签' : `标签：#${tag}`,
+      })),
+      ...(selectedYear ? [{ id: 'year', label: `年份：${selectedYear}年` }] : []),
+      ...(selectedMonth ? [{ id: 'month', label: `月份：${parseInt(selectedMonth, 10)}月` }] : []),
+    ];
+
+    onFilterSummaryChange?.(items);
+  }, [onFilterSummaryChange, selectedMonth, selectedTags, selectedYear]);
+
+  useEffect(() => {
+    if (!clearRequest) {
+      return;
+    }
+
+    if (clearRequest.targetId.startsWith('tag:')) {
+      const tag = clearRequest.targetId.slice(4);
+      setSelectedTags((prev) => prev.filter((item) => item !== tag));
+      return;
+    }
+
+    if (clearRequest.targetId === 'year') {
+      setSelectedYear('');
+      setSelectedMonth('');
+      return;
+    }
+
+    if (clearRequest.targetId === 'month') {
+      setSelectedMonth('');
+    }
+  }, [clearRequest]);
+
+  useEffect(() => {
+    setSelectedTags([]);
+    setSelectedYear('');
+    setSelectedMonth('');
+    setIsTagDropdownOpen(false);
+    setIsYearDropdownOpen(false);
+    setIsMonthDropdownOpen(false);
+  }, [resetSignal]);
 
   // 清除所有过滤
   const handleClearAll = () => {
@@ -180,34 +190,98 @@ export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickF
   };
 
   // 只有管理员认证后且设置启用时才显示
-  if (!isAdminAuthenticated || settingsLoading || !quickFiltersSettings.enabled) {
+  if (!isAdminAuthenticated || !enabled) {
     return null;
   }
 
   const hasActiveFilters = selectedTags.length > 0 || selectedYear || selectedMonth;
+  const tagOptions = [
+    {
+      key: '__no_tags__',
+      label: `📝 无标签 (${untaggedEntryCount})`,
+      selected: selectedTags.includes('__no_tags__'),
+      onSelect: () => toggleTag('__no_tags__'),
+    },
+    ...availableTags.map((tag) => ({
+      key: tag,
+      label: `#${tag}`,
+      selected: selectedTags.includes(tag),
+      onSelect: () => toggleTag(tag),
+    })),
+  ];
+  const yearOptions = [
+    {
+      key: '__all_years__',
+      label: '所有年份',
+      selected: !selectedYear,
+      onSelect: () => {
+        setSelectedYear('');
+        setIsYearDropdownOpen(false);
+      },
+    },
+    ...availableYears.map((year) => ({
+      key: year,
+      label: `${year}年`,
+      selected: selectedYear === year,
+      onSelect: () => {
+        setSelectedYear(year);
+        setIsYearDropdownOpen(false);
+      },
+    })),
+  ];
+  const monthOptions = [
+    {
+      key: '__all_months__',
+      label: '所有月份',
+      selected: !selectedMonth,
+      onSelect: () => {
+        setSelectedMonth('');
+        setIsMonthDropdownOpen(false);
+      },
+    },
+    ...(selectedYear ? availableMonthsByYear[selectedYear] || [] : availableMonths).map((month) => ({
+      key: month,
+      label: `${parseInt(month, 10)}月`,
+      selected: selectedMonth === month,
+      onSelect: () => {
+        setSelectedMonth(month);
+        setIsMonthDropdownOpen(false);
+      },
+    })),
+  ];
 
   return (
-    <div className="space-y-4">
-      {/* 快速过滤标题 */}
+    <div className="space-y-3">
       <div className="flex items-center justify-between">
-        <h3 className={`${isMobile ? 'text-sm' : 'text-base'} font-medium`} style={{ color: theme.colors.text }}>
-          快速筛选
-        </h3>
+        <div className="flex items-center gap-2">
+          <h3 className={`${isMobile ? 'text-sm' : 'text-base'} font-medium`} style={{ color: theme.colors.text }}>
+            快速筛选
+          </h3>
+          <span
+            className="rounded-full px-2 py-1 text-[11px]"
+            style={{
+              backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.12)' : `${theme.colors.primary}12`,
+              color: theme.colors.textSecondary,
+              border: `1px solid ${theme.colors.border}`,
+            }}
+          >
+            {hasActiveFilters ? '按标签和时间收窄结果' : '轻量浏览'}
+          </span>
+        </div>
         {hasActiveFilters && (
           <button
+            type="button"
             onClick={handleClearAll}
-            className={`flex items-center gap-1 ${isMobile ? 'text-xs px-2 py-1' : 'text-sm px-3 py-1'} rounded-full transition-colors`}
+            className={`flex items-center gap-1 rounded-full transition-colors ${isMobile ? 'px-2.5 py-1 text-xs' : 'px-3 py-1.5 text-sm'}`}
             style={{
               backgroundColor: theme.mode === 'glass'
-                ? 'rgba(239, 68, 68, 0.4)'
-                : `${theme.colors.accent}20`,
+                ? 'rgba(148, 163, 184, 0.16)'
+                : `${theme.colors.accent}16`,
               color: theme.mode === 'glass'
-                ? '#ffffff'
+                ? theme.colors.text
                 : theme.colors.accent,
-              border: theme.mode === 'glass'
-                ? '1px solid rgba(239, 68, 68, 0.6)'
-                : `1px solid ${theme.colors.accent}40`,
-              textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.6)' : 'none',
+              border: `1px solid ${theme.mode === 'glass' ? theme.colors.border : `${theme.colors.accent}35`}`,
+              textShadow: 'none',
               backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none'
             }}
           >
@@ -217,424 +291,109 @@ export function QuickFilters({ entries, onFilterResults, onClearFilter }: QuickF
         )}
       </div>
 
-      {/* 过滤选项 */}
-      <div className={`grid ${isMobile ? 'grid-cols-1 gap-3' : 'grid-cols-3 gap-4'}`}>
-        {/* 标签过滤 */}
-        <div className="space-y-2" ref={tagDropdownRef}>
-          <label className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium flex items-center gap-2`} style={{ color: theme.colors.text }}>
-            <Tag className="w-4 h-4" />
-            标签 {selectedTags.length > 0 && `(${selectedTags.length})`}
-          </label>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
-              className={`w-full ${isMobile ? 'px-2 py-1.5 text-sm' : 'px-3 py-2'} rounded border focus:outline-none focus:ring-2 transition-all text-left flex items-center justify-between`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(71, 85, 105, 0.7)'
-                  : theme.colors.surface,
-                borderColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : theme.colors.border,
-                color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none',
-                '--tw-ring-color': theme.colors.primary,
-              } as React.CSSProperties}
-            >
-              <span className="truncate">
-                {selectedTags.length === 0
-                  ? '选择标签...'
-                  : selectedTags.length === 1
-                    ? selectedTags[0] === '__no_tags__' ? '📝 无标签' : `#${selectedTags[0]}`
-                    : `已选择 ${selectedTags.length} 个标签`
-                }
-              </span>
-              <ChevronDown className={`w-4 h-4 transition-transform ${isTagDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {isTagDropdownOpen && (
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-3 gap-4'}`}>
+        <div className={isMobile ? 'col-span-2' : undefined}>
+          <QuickFilterDropdown
+            label={
+              <>
+                <Tag className="w-4 h-4" />
+                标签 {selectedTags.length > 0 && `(${selectedTags.length})`}
+              </>
+            }
+            triggerLabel={
+              selectedTags.length === 0
+                ? '选择标签...'
+                : selectedTags.length === 1
+                  ? (selectedTags[0] === '__no_tags__' ? '📝 无标签' : `#${selectedTags[0]}`)
+                  : `已选择 ${selectedTags.length} 个标签`
+            }
+            isOpen={isTagDropdownOpen}
+            isMobile={isMobile}
+            theme={theme}
+            dropdownRef={tagDropdownRef}
+            onToggle={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
+            options={tagOptions}
+            emptyState={availableTags.length === 0 && untaggedEntryCount === 0 ? (
               <div
-                className="absolute z-50 w-full mt-1 rounded border shadow-lg max-h-60 overflow-y-auto"
-                style={{
-                  backgroundColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.25)'
-                    : theme.colors.surface,
-                  borderColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.5)'
-                    : theme.colors.border,
-                  backdropFilter: theme.mode === 'glass' ? 'blur(20px)' : 'none',
-                  boxShadow: theme.mode === 'glass' ? '0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
-                }}
+                className="px-3 py-2 text-center text-sm opacity-60"
+                style={{ color: theme.colors.textSecondary }}
               >
-                {/* 无标签选项 */}
-                <button
-                  type="button"
-                  onClick={() => toggleTag('__no_tags__')}
-                  className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                  style={{
-                    backgroundColor: selectedTags.includes('__no_tags__')
-                      ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                      : 'transparent',
-                    color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                    textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                  }}
-                >
-                  <span>📝 无标签 ({getNoTagsCount()})</span>
-                  {selectedTags.includes('__no_tags__') && (
-                    <div
-                      className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                      style={{ backgroundColor: theme.colors.primary }}
-                    >
-                      ✓
-                    </div>
-                  )}
-                </button>
-
-                {/* 标签选项 */}
-                {getAllTags().map(tag => (
-                  <button
-                    key={tag}
-                    type="button"
-                    onClick={() => toggleTag(tag)}
-                    className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                    style={{
-                      backgroundColor: selectedTags.includes(tag)
-                        ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                        : 'transparent',
-                      color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                      textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                    }}
-                  >
-                    <span>#{tag}</span>
-                    {selectedTags.includes(tag) && (
-                      <div
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                        style={{ backgroundColor: theme.colors.primary }}
-                      >
-                        ✓
-                      </div>
-                    )}
-                  </button>
-                ))}
-
-                {getAllTags().length === 0 && getNoTagsCount() === 0 && (
-                  <div
-                    className="px-3 py-2 text-center text-sm opacity-60"
-                    style={{ color: theme.mode === 'glass' ? '#6b7280' : theme.colors.textSecondary }}
-                  >
-                    暂无可用标签
-                  </div>
-                )}
+                暂无可用标签
               </div>
-            )}
-          </div>
+            ) : undefined}
+          />
         </div>
 
-        {/* 年份过滤 */}
-        <div className="space-y-2" ref={yearDropdownRef}>
-          <label className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium flex items-center gap-2`} style={{ color: theme.colors.text }}>
-            <Calendar className="w-4 h-4" />
-            年份
-          </label>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                setIsYearDropdownOpen(!isYearDropdownOpen);
-                setIsTagDropdownOpen(false);
-                setIsMonthDropdownOpen(false);
-              }}
-              className={`w-full ${isMobile ? 'px-2 py-1.5 text-sm' : 'px-3 py-2'} rounded border focus:outline-none focus:ring-2 transition-all text-left flex items-center justify-between`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(71, 85, 105, 0.7)'
-                  : theme.colors.surface,
-                borderColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : theme.colors.border,
-                color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none',
-                '--tw-ring-color': theme.colors.primary,
-              } as React.CSSProperties}
-            >
-              <span className="truncate">
-                {selectedYear ? `${selectedYear}年` : '所有年份'}
-              </span>
-              <ChevronDown className={`w-4 h-4 transition-transform ${isYearDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
+        <QuickFilterDropdown
+          label={
+            <>
+              <Calendar className="w-4 h-4" />
+              年份
+            </>
+          }
+          triggerLabel={selectedYear ? `${selectedYear}年` : '所有年份'}
+          isOpen={isYearDropdownOpen}
+          isMobile={isMobile}
+          theme={theme}
+          dropdownRef={yearDropdownRef}
+          onToggle={() => {
+            setIsYearDropdownOpen(!isYearDropdownOpen);
+            setIsTagDropdownOpen(false);
+            setIsMonthDropdownOpen(false);
+          }}
+          options={yearOptions}
+        />
 
-            {isYearDropdownOpen && (
-              <div
-                className="absolute z-50 w-full mt-1 rounded border shadow-lg max-h-60 overflow-y-auto"
-                style={{
-                  backgroundColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.25)'
-                    : theme.colors.surface,
-                  borderColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.5)'
-                    : theme.colors.border,
-                  backdropFilter: theme.mode === 'glass' ? 'blur(20px)' : 'none',
-                  boxShadow: theme.mode === 'glass' ? '0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
-                }}
-              >
-                {/* 清除年份 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedYear('');
-                    setIsYearDropdownOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                  style={{
-                    backgroundColor: !selectedYear
-                      ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                      : 'transparent',
-                    color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                    textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                  }}
-                >
-                  <span>所有年份</span>
-                  {!selectedYear && (
-                    <div
-                      className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                      style={{ backgroundColor: theme.colors.primary }}
-                    >
-                      ✓
-                    </div>
-                  )}
-                </button>
-
-                {/* 年份选项 */}
-                {getAllYears().map(year => (
-                  <button
-                    key={year}
-                    type="button"
-                    onClick={() => {
-                      setSelectedYear(year);
-                      setIsYearDropdownOpen(false);
-                    }}
-                    className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                    style={{
-                      backgroundColor: selectedYear === year
-                        ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                        : 'transparent',
-                      color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                      textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                    }}
-                  >
-                    <span>{year}年</span>
-                    {selectedYear === year && (
-                      <div
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                        style={{ backgroundColor: theme.colors.primary }}
-                      >
-                        ✓
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-
-        {/* 月份过滤 */}
-        <div className="space-y-2" ref={monthDropdownRef}>
-          <label className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium flex items-center gap-2`} style={{ color: theme.colors.text }}>
-            <Calendar className="w-4 h-4" />
-            月份
-          </label>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => {
-                setIsMonthDropdownOpen(!isMonthDropdownOpen);
-                setIsTagDropdownOpen(false);
-                setIsYearDropdownOpen(false);
-              }}
-              className={`w-full ${isMobile ? 'px-2 py-1.5 text-sm' : 'px-3 py-2'} rounded border focus:outline-none focus:ring-2 transition-all text-left flex items-center justify-between`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(71, 85, 105, 0.7)'
-                  : theme.colors.surface,
-                borderColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : theme.colors.border,
-                color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none',
-                '--tw-ring-color': theme.colors.primary,
-              } as React.CSSProperties}
-            >
-              <span className="truncate">
-                {selectedMonth ? `${parseInt(selectedMonth)}月` : '所有月份'}
-              </span>
-              <ChevronDown className={`w-4 h-4 transition-transform ${isMonthDropdownOpen ? 'rotate-180' : ''}`} />
-            </button>
-
-            {isMonthDropdownOpen && (
-              <div
-                className="absolute z-50 w-full mt-1 rounded border shadow-lg max-h-60 overflow-y-auto"
-                style={{
-                  backgroundColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.25)'
-                    : theme.colors.surface,
-                  borderColor: theme.mode === 'glass'
-                    ? 'rgba(99, 102, 241, 0.5)'
-                    : theme.colors.border,
-                  backdropFilter: theme.mode === 'glass' ? 'blur(20px)' : 'none',
-                  boxShadow: theme.mode === 'glass' ? '0 8px 32px rgba(0, 0, 0, 0.3), 0 0 15px rgba(99, 102, 241, 0.3)' : 'none',
-                }}
-              >
-                {/* 清除月份 */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectedMonth('');
-                    setIsMonthDropdownOpen(false);
-                  }}
-                  className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                  style={{
-                    backgroundColor: !selectedMonth
-                      ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                      : 'transparent',
-                    color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                    textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                  }}
-                >
-                  <span>所有月份</span>
-                  {!selectedMonth && (
-                    <div
-                      className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                      style={{ backgroundColor: theme.colors.primary }}
-                    >
-                      ✓
-                    </div>
-                  )}
-                </button>
-
-                {/* 月份选项 */}
-                {getAllMonths().map(month => (
-                  <button
-                    key={month}
-                    type="button"
-                    onClick={() => {
-                      setSelectedMonth(month);
-                      setIsMonthDropdownOpen(false);
-                    }}
-                    className={`w-full px-3 py-2 text-left hover:bg-opacity-80 transition-colors flex items-center justify-between ${isMobile ? 'text-sm' : ''}`}
-                    style={{
-                      backgroundColor: selectedMonth === month
-                        ? (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.2)' : `${theme.colors.primary}20`)
-                        : 'transparent',
-                      color: theme.mode === 'glass' ? '#ffffff' : theme.colors.text,
-                      textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.5)' : 'none',
-                    }}
-                  >
-                    <span>{parseInt(month)}月</span>
-                    {selectedMonth === month && (
-                      <div
-                        className="w-4 h-4 rounded-full flex items-center justify-center text-xs font-bold text-white"
-                        style={{ backgroundColor: theme.colors.primary }}
-                      >
-                        ✓
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        <QuickFilterDropdown
+          label={
+            <>
+              <Calendar className="w-4 h-4" />
+              月份
+            </>
+          }
+          triggerLabel={selectedMonth ? `${parseInt(selectedMonth, 10)}月` : '所有月份'}
+          isOpen={isMonthDropdownOpen}
+          isMobile={isMobile}
+          theme={theme}
+          dropdownRef={monthDropdownRef}
+          onToggle={() => {
+            setIsMonthDropdownOpen(!isMonthDropdownOpen);
+            setIsTagDropdownOpen(false);
+            setIsYearDropdownOpen(false);
+          }}
+          options={monthOptions}
+        />
       </div>
 
-      {/* 活跃过滤器显示 */}
       {hasActiveFilters && (
         <div className="flex flex-wrap gap-2">
-          {selectedTags.map(tag => (
-            <span
+          {selectedTags.map((tag) => (
+            <ActiveFilterChip
               key={tag}
-              className={`flex items-center gap-1 ${isMobile ? 'text-xs px-2 py-1' : 'text-sm px-3 py-1'} rounded-full`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : `${theme.colors.primary}20`,
-                color: theme.mode === 'glass'
-                  ? '#ffffff'
-                  : theme.colors.primary,
-                border: theme.mode === 'glass'
-                  ? '1px solid rgba(99, 102, 241, 0.6)'
-                  : `1px solid ${theme.colors.primary}40`,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.6)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none'
-              }}
-            >
-              <Tag className="w-3 h-3" />
-              {tag === '__no_tags__' ? '📝 无标签' : `#${tag}`}
-              <button
-                onClick={() => toggleTag(tag)}
-                className="hover:opacity-80 transition-opacity"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
+              icon={<Tag className="w-3 h-3" />}
+              label={tag === '__no_tags__' ? '📝 无标签' : `#${tag}`}
+              isMobile={isMobile}
+              theme={theme}
+              onRemove={() => toggleTag(tag)}
+            />
           ))}
           {selectedYear && (
-            <span
-              className={`flex items-center gap-1 ${isMobile ? 'text-xs px-2 py-1' : 'text-sm px-3 py-1'} rounded-full`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : `${theme.colors.primary}20`,
-                color: theme.mode === 'glass'
-                  ? '#ffffff'
-                  : theme.colors.primary,
-                border: theme.mode === 'glass'
-                  ? '1px solid rgba(99, 102, 241, 0.6)'
-                  : `1px solid ${theme.colors.primary}40`,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.6)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none'
-              }}
-            >
-              <Calendar className="w-3 h-3" />
-              {selectedYear}年
-              <button
-                onClick={() => setSelectedYear('')}
-                className="hover:opacity-80 transition-opacity"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
+            <ActiveFilterChip
+              icon={<Calendar className="w-3 h-3" />}
+              label={`${selectedYear}年`}
+              isMobile={isMobile}
+              theme={theme}
+              onRemove={() => setSelectedYear('')}
+            />
           )}
           {selectedMonth && (
-            <span
-              className={`flex items-center gap-1 ${isMobile ? 'text-xs px-2 py-1' : 'text-sm px-3 py-1'} rounded-full`}
-              style={{
-                backgroundColor: theme.mode === 'glass'
-                  ? 'rgba(99, 102, 241, 0.4)'
-                  : `${theme.colors.primary}20`,
-                color: theme.mode === 'glass'
-                  ? '#ffffff'
-                  : theme.colors.primary,
-                border: theme.mode === 'glass'
-                  ? '1px solid rgba(99, 102, 241, 0.6)'
-                  : `1px solid ${theme.colors.primary}40`,
-                textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.6)' : 'none',
-                backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none'
-              }}
-            >
-              <Calendar className="w-3 h-3" />
-              {parseInt(selectedMonth)}月
-              <button
-                onClick={() => setSelectedMonth('')}
-                className="hover:opacity-80 transition-opacity"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </span>
+            <ActiveFilterChip
+              icon={<Calendar className="w-3 h-3" />}
+              label={`${parseInt(selectedMonth, 10)}月`}
+              isMobile={isMobile}
+              theme={theme}
+              onRemove={() => setSelectedMonth('')}
+            />
           )}
         </div>
       )}

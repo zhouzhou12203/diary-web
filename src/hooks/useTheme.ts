@@ -25,53 +25,53 @@ const themes: Record<ThemeMode, ThemeConfig> = {
   light: {
     mode: 'light',
     colors: {
-      primary: '#3b82f6',
-      secondary: '#64748b',
-      background: '#ffffff',
-      surface: '#f8fafc',
-      text: '#1e293b',
-      textSecondary: '#64748b',
-      border: '#e2e8f0',
-      accent: '#06b6d4',
+      primary: '#1d4ed8',
+      secondary: '#6b7280',
+      background: '#f3eee2',
+      surface: '#fffdf7',
+      text: '#1f2937',
+      textSecondary: '#6b7280',
+      border: '#d9cfbf',
+      accent: '#c2410c',
     },
     effects: {
       blur: 'backdrop-blur-sm',
-      shadow: 'shadow-lg',
-      gradient: 'bg-gradient-to-br from-blue-50 to-indigo-100',
+      shadow: 'shadow-xl',
+      gradient: 'bg-gradient-to-br from-stone-50 to-amber-50',
     },
   },
   dark: {
     mode: 'dark',
     colors: {
-      primary: '#60a5fa',
+      primary: '#7dd3fc',
       secondary: '#94a3b8',
-      background: '#0f172a',
-      surface: '#1e293b',
-      text: '#f1f5f9',
-      textSecondary: '#94a3b8',
-      border: '#334155',
-      accent: '#22d3ee',
+      background: '#0f1720',
+      surface: '#16202b',
+      text: '#e6edf5',
+      textSecondary: '#9aa7b6',
+      border: '#2b394b',
+      accent: '#f59e0b',
     },
     effects: {
       blur: 'backdrop-blur-sm',
-      shadow: 'shadow-2xl shadow-black/50',
-      gradient: 'bg-gradient-to-br from-slate-900 to-slate-800',
+      shadow: 'shadow-2xl shadow-black/40',
+      gradient: 'bg-gradient-to-br from-slate-950 to-slate-900',
     },
   },
   glass: {
     mode: 'glass',
     colors: {
-      primary: '#6366f1',
-      secondary: '#818cf8',
+      primary: '#a5d8ff',
+      secondary: '#cbd5e1',
       background: 'transparent',
-      surface: 'rgba(15, 23, 42, 0.85)',
-      text: '#ffffff',
-      textSecondary: 'rgba(255, 255, 255, 0.9)',
-      border: 'rgba(99, 102, 241, 0.3)',
-      accent: '#8b5cf6',
+      surface: 'rgba(10, 18, 28, 0.72)',
+      text: '#f8fbff',
+      textSecondary: 'rgba(226, 232, 240, 0.84)',
+      border: 'rgba(148, 163, 184, 0.24)',
+      accent: '#7dd3fc',
     },
     effects: {
-      blur: 'backdrop-blur-xl',
+      blur: 'backdrop-blur-2xl',
       shadow: 'glass-shadow',
       gradient: 'glass-gradient',
     },
@@ -100,9 +100,12 @@ export function useTheme() {
     Object.entries(themeConfig.colors).forEach(([key, value]) => {
       root.style.setProperty(`--color-${key}`, value);
     });
-    
+
     // 更新 body 类名
     document.body.className = `theme-${mode}`;
+
+    const themeColor = mode === 'dark' ? '#0f1720' : mode === 'glass' ? '#0a121c' : '#f3eee2';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', themeColor);
   };
 
   useEffect(() => {

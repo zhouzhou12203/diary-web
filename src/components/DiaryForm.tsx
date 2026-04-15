@@ -1,10 +1,21 @@
-import React, { useState, useEffect } from 'react';
-import { X, Save } from 'lucide-react';
-import { DiaryEntry, MoodType, WeatherType, LocationInfo } from '../types';
-import { MarkdownEditor } from './MarkdownEditor';
-import { ImageUpload } from './ImageUpload';
-import { LocationPicker } from './LocationPicker';
+import React, { Suspense, lazy, useEffect, useState, type CSSProperties, type ReactNode } from 'react';
+import type { DiaryEntry, MoodType, WeatherType, LocationInfo } from '../types/index.ts';
+import { ModalHeader } from './ModalHeader';
+import { ModalShell } from './ModalShell';
 import { useThemeContext } from './ThemeProvider';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { useIsMobile } from '../hooks/useIsMobile';
+import type { ThemeConfig } from '../hooks/useTheme';
+
+const MarkdownEditor = lazy(() =>
+  import('./MarkdownEditor').then((module) => ({ default: module.MarkdownEditor }))
+);
+const ImageUpload = lazy(() =>
+  import('./ImageUpload').then((module) => ({ default: module.ImageUpload }))
+);
+const LocationPicker = lazy(() =>
+  import('./LocationPicker').then((module) => ({ default: module.LocationPicker }))
+);
 
 interface DiaryFormProps {
   entry?: DiaryEntry;
@@ -13,20 +24,53 @@ interface DiaryFormProps {
   isOpen: boolean;
 }
 
-const moods: { value: MoodType; label: string; emoji: string }[] = [
+type DiaryFormOption<T extends string> = {
+  value: T;
+  label: string;
+  emoji?: string;
+};
+
+type DiaryFormConfirmDialogProps = {
+  isOpen: boolean;
+  onClose: () => void;
+  ariaLabel: string;
+  title: string;
+  description: ReactNode;
+  cancelLabel: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  confirmTone: 'primary' | 'accent';
+  theme: ThemeConfig;
+};
+
+type DiaryFormSelectWithCustomFieldProps = {
+  label: string;
+  value: string;
+  options: DiaryFormOption<string>[];
+  customOptionLabel: string;
+  showCustom: boolean;
+  customValue: string;
+  customPlaceholder: string;
+  onSelectChange: (value: string) => void;
+  onCustomChange: (value: string) => void;
+  theme: ThemeConfig;
+  isMobile: boolean;
+};
+
+const moods: DiaryFormOption<MoodType>[] = [
   { value: 'happy', label: '开心', emoji: '😊' },
   { value: 'sad', label: '难过', emoji: '😢' },
   { value: 'neutral', label: '平静', emoji: '😐' },
   { value: 'excited', label: '兴奋', emoji: '🤩' },
   { value: 'anxious', label: '焦虑', emoji: '😰' },
-  { value: 'peaceful', label: '宁静', emoji: '😌' },
+  { value: 'peaceful', label: '平和', emoji: '😌' },
   { value: 'calm', label: '冷静', emoji: '😌' },
   { value: 'angry', label: '愤怒', emoji: '😠' },
   { value: 'grateful', label: '感恩', emoji: '🙏' },
   { value: 'loved', label: '被爱', emoji: '🥰' },
 ];
 
-const weathers: { value: WeatherType; label: string }[] = [
+const weathers: DiaryFormOption<WeatherType>[] = [
   { value: 'sunny', label: '晴天' },
   { value: 'cloudy', label: '多云' },
   { value: 'rainy', label: '雨天' },
@@ -34,8 +78,313 @@ const weathers: { value: WeatherType; label: string }[] = [
   { value: 'unknown', label: '未知' },
 ];
 
+const DIARY_FORM_DRAFT_KEY = 'diary_form_draft';
+
+type DiaryFormSnapshot = {
+  title: string;
+  content: string;
+  contentType: 'markdown' | 'plain';
+  mood: string;
+  weather: string;
+  customMood: string;
+  customWeather: string;
+  images: string[];
+  location: LocationInfo | null;
+  tags: string[];
+};
+
+type DiaryFormDraft = DiaryFormSnapshot & {
+  updatedAt: string;
+};
+
+function createEmptySnapshot(): DiaryFormSnapshot {
+  return {
+    title: '',
+    content: '',
+    contentType: 'markdown',
+    mood: 'neutral',
+    weather: 'unknown',
+    customMood: '',
+    customWeather: '',
+    images: [],
+    location: null,
+    tags: [],
+  };
+}
+
+function formatDraftTime(value: string) {
+  return new Date(value).toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+function getFormControlStyle(theme: ThemeConfig): CSSProperties {
+  return {
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    color: theme.colors.text,
+    '--tw-ring-color': theme.colors.primary,
+  } as CSSProperties;
+}
+
+function getSecondaryButtonStyle(theme: ThemeConfig): CSSProperties {
+  return {
+    color: theme.colors.textSecondary,
+    border: `1px solid ${theme.colors.border}`,
+    backgroundColor: theme.colors.surface,
+  };
+}
+
+function getStatusPillStyle(theme: ThemeConfig, tone: 'saving' | 'dirty' | 'saved'): CSSProperties {
+  if (tone === 'dirty') {
+    return {
+      backgroundColor: 'rgba(245, 158, 11, 0.12)',
+      border: '1px solid rgba(245, 158, 11, 0.28)',
+      color: '#b45309',
+    };
+  }
+
+  if (tone === 'saving') {
+    return {
+      backgroundColor: `${theme.colors.primary}16`,
+      border: `1px solid ${theme.colors.primary}33`,
+      color: theme.colors.primary,
+    };
+  }
+
+  return {
+    backgroundColor: 'rgba(16, 185, 129, 0.12)',
+    border: '1px solid rgba(16, 185, 129, 0.28)',
+    color: '#047857',
+  };
+}
+
+function buildSnapshot(input: DiaryFormSnapshot) {
+  return JSON.stringify({
+    ...input,
+    title: input.title.trim(),
+    content: input.content.trim(),
+    customMood: input.customMood.trim(),
+    customWeather: input.customWeather.trim(),
+    images: [...input.images],
+    tags: [...input.tags],
+  });
+}
+
+function hasMeaningfulDraft(input: DiaryFormSnapshot) {
+  return Boolean(
+    input.title.trim() ||
+    input.content.trim() ||
+    input.customMood.trim() ||
+    input.customWeather.trim() ||
+    input.images.length > 0 ||
+    input.location ||
+    input.tags.length > 0
+  );
+}
+
+function shouldShowAdvancedOptions(snapshot: DiaryFormSnapshot) {
+  return (
+    snapshot.images.length > 0 ||
+    snapshot.tags.length > 0 ||
+    Boolean(snapshot.location) ||
+    snapshot.mood === 'custom' ||
+    snapshot.weather === 'custom'
+  );
+}
+
+function isPresetOption(options: DiaryFormOption<string>[], value: string) {
+  return options.some((option) => option.value === value);
+}
+
+function resolveSelectableField(options: DiaryFormOption<string>[], value: string, fallbackValue: string) {
+  const normalizedValue = value || fallbackValue;
+
+  if (isPresetOption(options, normalizedValue)) {
+    return {
+      value: normalizedValue,
+      customValue: '',
+    };
+  }
+
+  return {
+    value: 'custom',
+    customValue: normalizedValue,
+  };
+}
+
+function createSnapshotFromEntry(entry: DiaryEntry): DiaryFormSnapshot {
+  const moodState = resolveSelectableField(moods, entry.mood || 'neutral', 'neutral');
+  const weatherState = resolveSelectableField(weathers, entry.weather || 'unknown', 'unknown');
+
+  return {
+    title: entry.title,
+    content: entry.content,
+    contentType: (entry.content_type as 'markdown' | 'plain') || 'markdown',
+    mood: moodState.value,
+    weather: weatherState.value,
+    customMood: moodState.customValue,
+    customWeather: weatherState.customValue,
+    images: entry.images || [],
+    location: entry.location || null,
+    tags: entry.tags || [],
+  };
+}
+
+function resolveSubmittedValue(value: string, customValue: string) {
+  return value === 'custom' ? customValue.trim() : value;
+}
+
+function readStoredDraft(): DiaryFormDraft | null {
+  try {
+    const raw = localStorage.getItem(DIARY_FORM_DRAFT_KEY);
+    if (!raw) {
+      return null;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<DiaryFormDraft>;
+    if (!parsed || typeof parsed !== 'object') {
+      return null;
+    }
+
+    const normalizedDraft: DiaryFormDraft = {
+      title: typeof parsed.title === 'string' ? parsed.title : '',
+      content: typeof parsed.content === 'string' ? parsed.content : '',
+      contentType: parsed.contentType === 'plain' ? 'plain' : 'markdown',
+      mood: typeof parsed.mood === 'string' ? parsed.mood : 'neutral',
+      weather: typeof parsed.weather === 'string' ? parsed.weather : 'unknown',
+      customMood: typeof parsed.customMood === 'string' ? parsed.customMood : '',
+      customWeather: typeof parsed.customWeather === 'string' ? parsed.customWeather : '',
+      images: Array.isArray(parsed.images) ? parsed.images.filter((item): item is string => typeof item === 'string') : [],
+      location: parsed.location && typeof parsed.location === 'object' ? parsed.location as LocationInfo : null,
+      tags: Array.isArray(parsed.tags) ? parsed.tags.filter((item): item is string => typeof item === 'string') : [],
+      updatedAt: typeof parsed.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+
+    return normalizedDraft;
+  } catch {
+    return null;
+  }
+}
+
+function DiaryFormConfirmDialog({
+  isOpen,
+  onClose,
+  ariaLabel,
+  title,
+  description,
+  cancelLabel,
+  confirmLabel,
+  onConfirm,
+  confirmTone,
+  theme,
+}: DiaryFormConfirmDialogProps) {
+  return (
+    <ModalShell
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel={ariaLabel}
+      zIndex={60}
+      panelClassName="w-full max-w-md rounded-xl"
+      panelStyle={{
+        backgroundColor: theme.colors.surface,
+        border: `1px solid ${theme.colors.border}`,
+      }}
+      backdropStyle={{ backgroundColor: 'rgba(0, 0, 0, 0.4)' }}
+    >
+      <div className="space-y-4 p-6">
+        <div>
+          <h3 className="text-lg font-semibold" style={{ color: theme.colors.text }}>
+            {title}
+          </h3>
+          <div className="mt-2 text-sm leading-6" style={{ color: theme.colors.textSecondary }}>
+            {description}
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-3">
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-lg px-4 py-2 transition-colors"
+            style={getSecondaryButtonStyle(theme)}
+          >
+            {cancelLabel}
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-lg px-4 py-2 font-medium text-white transition-opacity hover:opacity-90"
+            style={{ backgroundColor: confirmTone === 'accent' ? theme.colors.accent : theme.colors.primary }}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function DiaryFormSelectWithCustomField({
+  label,
+  value,
+  options,
+  customOptionLabel,
+  showCustom,
+  customValue,
+  customPlaceholder,
+  onSelectChange,
+  onCustomChange,
+  theme,
+  isMobile,
+}: DiaryFormSelectWithCustomFieldProps) {
+  const controlStyle = getFormControlStyle(theme);
+
+  return (
+    <div>
+      <label
+        className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
+        style={{ color: theme.colors.text }}
+      >
+        {label}
+      </label>
+      <div className="space-y-2">
+        <select
+          value={value}
+          onChange={(event) => onSelectChange(event.target.value)}
+          className="w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-2 transition-all duration-200"
+          style={controlStyle}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.emoji ? `${option.emoji} ` : ''}
+              {option.label}
+            </option>
+          ))}
+          <option value="custom">{customOptionLabel}</option>
+        </select>
+
+        {showCustom && (
+          <input
+            type="text"
+            value={customValue}
+            autoComplete="off"
+            onChange={(event) => onCustomChange(event.target.value)}
+            placeholder={customPlaceholder}
+            className="w-full border rounded-md px-3 py-2 focus:outline-none focus:ring-2 transition-all duration-200"
+            style={controlStyle}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
   const { theme } = useThemeContext();
+  const titleInputRef = React.useRef<HTMLInputElement>(null);
+  const formRef = React.useRef<HTMLFormElement>(null);
   const [title, setTitle] = useState('');
   const [content, setContent] = useState('');
   const [contentType, setContentType] = useState<'markdown' | 'plain'>('markdown');
@@ -50,105 +399,225 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
   const [tags, setTags] = useState<string[]>([]);
   const [tagInput, setTagInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile();
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [draftToRestore, setDraftToRestore] = useState<DiaryFormDraft | null>(null);
+  const [showRestoreDraftPrompt, setShowRestoreDraftPrompt] = useState(false);
+  const [showDraftRestoredNotice, setShowDraftRestoredNotice] = useState(false);
+  const [lastDraftSavedAt, setLastDraftSavedAt] = useState<string | null>(null);
+  const [showDraftSavedNotice, setShowDraftSavedNotice] = useState(false);
+  const [showResetDraftConfirm, setShowResetDraftConfirm] = useState(false);
+  const initialSnapshotRef = React.useRef<string>('');
+  const lastSavedDraftSnapshotRef = React.useRef<string>('');
+  const controlStyle = getFormControlStyle(theme);
+  const secondaryButtonStyle = getSecondaryButtonStyle(theme);
 
-  // 检测是否为移动设备
-  useEffect(() => {
-    const checkMobile = () => {
-      setIsMobile(window.innerWidth < 768);
-    };
+  const clearStoredDraft = () => {
+    localStorage.removeItem(DIARY_FORM_DRAFT_KEY);
+  };
 
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
-  }, []);
+  const getCurrentSnapshot = (): DiaryFormSnapshot => ({
+    title,
+    content,
+    contentType,
+    mood,
+    weather,
+    customMood,
+    customWeather,
+    images,
+    location,
+    tags,
+  });
 
-  // 分离初始化逻辑，只在entry变化时执行
+  const applySnapshot = (snapshot: DiaryFormSnapshot) => {
+    setTitle(snapshot.title);
+    setContent(snapshot.content);
+    setContentType(snapshot.contentType);
+    setMood(snapshot.mood);
+    setWeather(snapshot.weather);
+    setCustomMood(snapshot.customMood);
+    setCustomWeather(snapshot.customWeather);
+    setShowCustomMood(snapshot.mood === 'custom');
+    setShowCustomWeather(snapshot.weather === 'custom');
+    setImages(snapshot.images);
+    setLocation(snapshot.location);
+    setTags(snapshot.tags);
+    setShowAdvanced(shouldShowAdvancedOptions(snapshot));
+  };
+
+  // 根据当前条目重置表单状态
   useEffect(() => {
     if (!isOpen) {
-      setIsInitialized(false);
-      return; // 只在对话框打开时初始化
+      return;
     }
 
-    // 防止重复初始化
-    if (isInitialized && entry?.id === entry?.id) return;
+    const nextFormSnapshot = entry ? createSnapshotFromEntry(entry) : createEmptySnapshot();
+    applySnapshot(nextFormSnapshot);
 
-    try {
-      if (entry) {
-        setTitle(entry.title);
-        setContent(entry.content);
-        setContentType((entry.content_type as 'markdown' | 'plain') || 'markdown');
+    setTagInput('');
+    setShowDiscardConfirm(false);
+    setShowRestoreDraftPrompt(false);
+    setDraftToRestore(null);
+    setShowDraftRestoredNotice(false);
+    setShowDraftSavedNotice(false);
+    setShowResetDraftConfirm(false);
+    setLastDraftSavedAt(null);
+    initialSnapshotRef.current = buildSnapshot(nextFormSnapshot);
+    lastSavedDraftSnapshotRef.current = '';
 
-        // 处理心情：检查是否为预定义选项
-        const entryMood = entry.mood || 'neutral';
-        const predefinedMood = moods.find(m => m.value === entryMood);
-        if (predefinedMood) {
-          setMood(entryMood);
-          setShowCustomMood(false);
-          setCustomMood('');
-        } else {
-          setMood('custom');
-          setShowCustomMood(true);
-          setCustomMood(entryMood);
-        }
-
-        // 处理天气：检查是否为预定义选项
-        const entryWeather = entry.weather || 'unknown';
-        const predefinedWeather = weathers.find(w => w.value === entryWeather);
-        if (predefinedWeather) {
-          setWeather(entryWeather);
-          setShowCustomWeather(false);
-          setCustomWeather('');
-        } else {
-          setWeather('custom');
-          setShowCustomWeather(true);
-          setCustomWeather(entryWeather);
-        }
-
-        setImages(entry.images || []);
-        setLocation(entry.location || null);
-        setTags(entry.tags || []);
-      } else {
-        setTitle('');
-        setContent('');
-        setContentType('markdown');
-        setMood('neutral');
-        setWeather('unknown');
-        setCustomMood('');
-        setCustomWeather('');
-        setShowCustomMood(false);
-        setShowCustomWeather(false);
-        setImages([]);
-        setLocation(null);
-        setTags([]);
+    if (!entry) {
+      const storedDraft = readStoredDraft();
+      if (storedDraft && hasMeaningfulDraft(storedDraft)) {
+        setDraftToRestore(storedDraft);
+        setLastDraftSavedAt(storedDraft.updatedAt);
+        lastSavedDraftSnapshotRef.current = buildSnapshot(storedDraft);
+        setShowRestoreDraftPrompt(true);
       }
-      setTagInput('');
-      setIsInitialized(true);
-    } catch (error) {
-      console.error('DiaryForm初始化失败:', error);
     }
-  }, [entry?.id, isOpen]); // 只依赖entry的id和isOpen状态
+  }, [entry, isOpen]);
 
-  // 打开弹窗时锁定背景滚动，关闭时恢复
+  useBodyScrollLock(isOpen);
+
+  const hasUnsavedChanges = initialSnapshotRef.current !== buildSnapshot(getCurrentSnapshot());
+  const formStatus = loading
+    ? { label: '正在保存...', tone: 'saving' as const }
+    : hasUnsavedChanges
+      ? { label: '有未保存改动', tone: 'dirty' as const }
+      : !entry && lastDraftSavedAt
+        ? { label: `本地草稿已于 ${formatDraftTime(lastDraftSavedAt)} 保存`, tone: 'saved' as const }
+        : null;
+
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen || !hasUnsavedChanges || loading) {
+      return;
+    }
 
-    const originalHtmlOverflow = document.documentElement.style.overflow;
-    const originalBodyOverflow = document.body.style.overflow;
-    const originalTouchAction = (document.body.style as any).touchAction;
-
-    document.documentElement.style.overflow = 'hidden';
-    document.body.style.overflow = 'hidden';
-    (document.body.style as any).touchAction = 'none';
-
-    return () => {
-      document.documentElement.style.overflow = originalHtmlOverflow;
-      document.body.style.overflow = originalBodyOverflow;
-      (document.body.style as any).touchAction = originalTouchAction;
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
     };
-  }, [isOpen]);
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [hasUnsavedChanges, isOpen, loading]);
+
+  useEffect(() => {
+    if (!isOpen || entry || loading || showRestoreDraftPrompt) {
+      return;
+    }
+
+    const snapshot = getCurrentSnapshot();
+    if (!hasMeaningfulDraft(snapshot)) {
+      clearStoredDraft();
+      setLastDraftSavedAt(null);
+      lastSavedDraftSnapshotRef.current = '';
+      return;
+    }
+
+    const currentSnapshot = buildSnapshot(snapshot);
+    if (currentSnapshot === lastSavedDraftSnapshotRef.current) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const draft: DiaryFormDraft = {
+        ...snapshot,
+        updatedAt: new Date().toISOString(),
+      };
+
+      localStorage.setItem(DIARY_FORM_DRAFT_KEY, JSON.stringify(draft));
+      lastSavedDraftSnapshotRef.current = currentSnapshot;
+      setLastDraftSavedAt(draft.updatedAt);
+      setShowDraftSavedNotice(true);
+    }, 400);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [content, contentType, customMood, customWeather, entry, images, isOpen, loading, location, mood, showRestoreDraftPrompt, tags, title, weather]);
+
+  const requestClose = () => {
+    if (loading) {
+      return;
+    }
+
+    if (hasUnsavedChanges) {
+      setShowDiscardConfirm(true);
+      return;
+    }
+
+    onCancel();
+  };
+
+  const handleDiscardChanges = () => {
+    setShowDiscardConfirm(false);
+    if (!entry) {
+      clearStoredDraft();
+    }
+    onCancel();
+  };
+
+  const handleRestoreDraft = () => {
+    if (!draftToRestore) {
+      return;
+    }
+
+    applySnapshot(draftToRestore);
+    initialSnapshotRef.current = buildSnapshot(draftToRestore);
+    lastSavedDraftSnapshotRef.current = buildSnapshot(draftToRestore);
+    setShowRestoreDraftPrompt(false);
+    setShowDraftRestoredNotice(true);
+    setLastDraftSavedAt(draftToRestore.updatedAt);
+  };
+
+  const handleDiscardStoredDraft = () => {
+    clearStoredDraft();
+    setDraftToRestore(null);
+    setShowRestoreDraftPrompt(false);
+    setLastDraftSavedAt(null);
+    lastSavedDraftSnapshotRef.current = '';
+  };
+
+  const handleResetDraft = () => {
+    const emptySnapshot = createEmptySnapshot();
+    clearStoredDraft();
+    applySnapshot(emptySnapshot);
+    setTagInput('');
+    setDraftToRestore(null);
+    setShowRestoreDraftPrompt(false);
+    setShowDraftRestoredNotice(false);
+    setShowDraftSavedNotice(false);
+    setLastDraftSavedAt(null);
+    initialSnapshotRef.current = buildSnapshot(emptySnapshot);
+    lastSavedDraftSnapshotRef.current = '';
+  };
+
+  const requestResetDraft = () => {
+    setShowResetDraftConfirm(true);
+  };
+
+  useEffect(() => {
+    if (!showDraftRestoredNotice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowDraftRestoredNotice(false);
+    }, 2600);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [showDraftRestoredNotice]);
+
+  useEffect(() => {
+    if (!showDraftSavedNotice) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setShowDraftSavedNotice(false);
+    }, 1800);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [showDraftSavedNotice]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -156,20 +625,22 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
 
     setLoading(true);
     try {
-      // 处理最终的心情和天气值
-      const finalMood = mood === 'custom' ? customMood.trim() : mood;
-      const finalWeather = weather === 'custom' ? customWeather.trim() : weather;
-
       await onSave({
         title: title.trim() || '无标题',
         content: content.trim(),
         content_type: contentType,
-        mood: finalMood,
-        weather: finalWeather,
+        mood: resolveSubmittedValue(mood, customMood),
+        weather: resolveSubmittedValue(weather, customWeather),
         images,
         location,
         tags,
       });
+
+      if (!entry) {
+        clearStoredDraft();
+        setLastDraftSavedAt(null);
+        lastSavedDraftSnapshotRef.current = '';
+      }
     } finally {
       setLoading(false);
     }
@@ -196,148 +667,196 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
 
   const handleMoodChange = (value: string) => {
     setMood(value);
-    if (value === 'custom') {
-      setShowCustomMood(true);
-    } else {
-      setShowCustomMood(false);
+    const isCustomValue = value === 'custom';
+    setShowCustomMood(isCustomValue);
+    if (!isCustomValue) {
       setCustomMood('');
     }
   };
 
   const handleWeatherChange = (value: string) => {
     setWeather(value);
-    if (value === 'custom') {
-      setShowCustomWeather(true);
-    } else {
-      setShowCustomWeather(false);
+    const isCustomValue = value === 'custom';
+    setShowCustomWeather(isCustomValue);
+    if (!isCustomValue) {
       setCustomWeather('');
     }
+  };
+
+  const focusContentInput = () => {
+    const tryFocus = (attempt = 0) => {
+      const contentInput = formRef.current?.querySelector<HTMLTextAreaElement>('textarea[data-diary-content-input="true"]');
+
+      if (contentInput) {
+        contentInput.focus();
+        const cursorPosition = contentInput.value.length;
+        contentInput.setSelectionRange(cursorPosition, cursorPosition);
+        return;
+      }
+
+      if (attempt < 4) {
+        window.setTimeout(() => tryFocus(attempt + 1), 60);
+      }
+    };
+
+    window.requestAnimationFrame(() => {
+      tryFocus();
+    });
   };
 
 
 
   if (!isOpen) return null;
 
-  return (
+  const sectionFallback = (
     <div
+      className="rounded-lg border px-4 py-3 text-sm"
       style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        height: '100vh',
-        zIndex: 50,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        backgroundColor: theme.colors.surface,
+        borderColor: theme.colors.border,
+        color: theme.colors.textSecondary,
+      }}
+    >
+      正在加载编辑模块...
+    </div>
+  );
+
+  return (
+    <ModalShell
+      isOpen={isOpen}
+      onClose={requestClose}
+      ariaLabelledby="diary-form-title"
+      initialFocusRef={titleInputRef}
+      zIndex={50}
+      padding={isMobile ? '8px' : '16px'}
+      backdropStyle={{
         backgroundColor: 'rgba(0, 0, 0, 0.5)',
-        padding: isMobile ? '8px' : '16px',
-        boxSizing: 'border-box',
         overflow: 'hidden',
         overscrollBehavior: 'contain'
       }}
-      onClick={(e) => {
-        // 点击背景关闭弹窗
-        if (e.target === e.currentTarget) {
-          onCancel();
-        }
-      }}
+      panelClassName={`${isMobile ? 'max-w-full rounded-lg' : 'max-w-4xl rounded-xl'} ${theme.effects.blur} w-full overflow-hidden shadow-2xl`}
+      panelStyle={{
+        backgroundColor: theme.colors.background,
+        overscrollBehavior: 'contain',
+        WebkitOverflowScrolling: 'touch',
+        display: 'flex',
+        flexDirection: 'column',
+        height: isMobile ? 'calc(var(--app-height, 100vh) - 16px)' : 'auto',
+        maxHeight: isMobile ? 'calc(var(--app-height, 100vh) - 16px)' : '90vh',
+      } as CSSProperties}
     >
-      <div
-        className={`${isMobile ? 'rounded-lg' : 'rounded-xl'} shadow-2xl w-full ${isMobile ? 'max-w-full h-full' : 'max-w-4xl max-h-[90vh]'} overflow-y-auto ${theme.effects.blur}`}
-        style={{ backgroundColor: theme.colors.background, overscrollBehavior: 'contain', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
-        onClick={(e) => {
-          // 防止点击弹窗内容时关闭弹窗
-          e.stopPropagation();
-        }}
-      >
-        <div
-          className={`flex justify-between items-center ${isMobile ? 'p-4' : 'p-6'}`}
-          style={{ borderBottom: `1px solid ${theme.colors.border}` }}
-        >
-          <h2
-            className={`${isMobile ? 'text-lg' : 'text-2xl'} font-bold`}
-            style={{ color: theme.colors.text }}
-          >
-            {entry ? '✏️ 编辑日记' : '📝 写新日记'}
-          </h2>
-          <button
-            onClick={onCancel}
-            className={`${isMobile ? 'p-1.5' : 'p-2'} rounded-full transition-all duration-200 hover:scale-110`}
-            style={{
-              backgroundColor: theme.colors.surface,
-              color: theme.colors.textSecondary
-            }}
-          >
-            <X className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
-          </button>
-        </div>
+      <ModalHeader
+        titleId="diary-form-title"
+        title={entry ? '编辑日记' : '写新日记'}
+        onClose={requestClose}
+        padded={isMobile ? 'sm' : 'lg'}
+      />
 
-        <form onSubmit={handleSubmit} className={`${isMobile ? 'p-4' : 'p-6'} space-y-${isMobile ? '4' : '6'}`}>
+      <form
+        ref={formRef}
+        onSubmit={handleSubmit}
+        className={`${isMobile ? 'space-y-4 p-4 pb-6' : 'space-y-6 p-6'} flex-1 overflow-y-auto`}
+      >
+          {(showDraftRestoredNotice || (showDraftSavedNotice && lastDraftSavedAt)) && (
+            <div
+              className="rounded-xl px-4 py-3 text-sm"
+              style={{
+                backgroundColor: `${theme.colors.primary}14`,
+                border: `1px solid ${theme.colors.primary}33`,
+                color: theme.colors.primary,
+              }}
+            >
+              <div>
+                {showDraftRestoredNotice
+                  ? '已恢复上次未提交的本地草稿，可以继续编辑或直接保存。'
+                  : '内容已自动保存到本地草稿。'}
+              </div>
+              {lastDraftSavedAt && (
+                <div className="mt-1 text-xs opacity-80">
+                  最近保存时间：{new Date(lastDraftSavedAt).toLocaleString('zh-CN')}
+                </div>
+              )}
+              {!entry && lastDraftSavedAt && (
+                <button
+                  type="button"
+                  onClick={requestResetDraft}
+                  className="mt-3 text-xs font-medium transition-opacity hover:opacity-80"
+                  style={{ color: theme.colors.accent }}
+                >
+                  清空本地草稿并重置表单
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Title - Optional */}
           <div>
             <label
               className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
               style={{ color: theme.colors.text }}
             >
-              📝 标题 <span className="text-xs opacity-60">(可选)</span>
+              标题 <span className="text-xs opacity-60">(可选)</span>
             </label>
             <input
+              ref={titleInputRef}
               type="text"
               value={title}
+              autoComplete="off"
+              enterKeyHint="next"
               onChange={(e) => setTitle(e.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter') {
+                  return;
+                }
+
+                event.preventDefault();
+                focusContentInput();
+              }}
               className={`w-full ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} rounded-lg border focus:outline-none focus:ring-2 transition-all duration-200`}
-              style={{
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                color: theme.colors.text,
-                '--tw-ring-color': theme.colors.primary,
-              } as React.CSSProperties}
+              style={controlStyle}
               placeholder="为这篇日记起个标题吧..."
             />
           </div>
 
-          {/* Content Type Toggle - 移动端隐藏 */}
-          {!isMobile && (
-            <div>
-              <label
-                className="block text-sm font-medium mb-2"
-                style={{ color: theme.colors.text }}
+          {/* Content Type Toggle */}
+          <div>
+            <label
+              className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
+              style={{ color: theme.colors.text }}
+            >
+              内容格式
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setContentType('markdown')}
+                className={`${isMobile ? 'px-3 py-2 text-xs' : 'px-4 py-2 text-sm'} rounded-lg transition-all duration-200 ${
+                  contentType === 'markdown' ? 'font-medium' : ''
+                }`}
+                style={{
+                  backgroundColor: contentType === 'markdown' ? theme.colors.primary : theme.colors.surface,
+                  color: contentType === 'markdown' ? 'white' : theme.colors.textSecondary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
               >
-                ✍️ 内容格式
-              </label>
-              <div className="flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setContentType('markdown')}
-                  className={`px-4 py-2 rounded-lg text-sm transition-all duration-200 ${
-                    contentType === 'markdown' ? 'font-medium' : ''
-                  }`}
-                  style={{
-                    backgroundColor: contentType === 'markdown' ? theme.colors.primary : theme.colors.surface,
-                    color: contentType === 'markdown' ? 'white' : theme.colors.textSecondary,
-                    border: `1px solid ${theme.colors.border}`
-                  }}
-                >
-                  Markdown
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setContentType('plain')}
-                  className={`px-4 py-2 rounded-lg text-sm transition-all duration-200 ${
-                    contentType === 'plain' ? 'font-medium' : ''
-                  }`}
-                  style={{
-                    backgroundColor: contentType === 'plain' ? theme.colors.primary : theme.colors.surface,
-                    color: contentType === 'plain' ? 'white' : theme.colors.textSecondary,
-                    border: `1px solid ${theme.colors.border}`
-                  }}
-                >
-                  纯文本
-                </button>
-              </div>
+                Markdown
+              </button>
+              <button
+                type="button"
+                onClick={() => setContentType('plain')}
+                className={`${isMobile ? 'px-3 py-2 text-xs' : 'px-4 py-2 text-sm'} rounded-lg transition-all duration-200 ${
+                  contentType === 'plain' ? 'font-medium' : ''
+                }`}
+                style={{
+                  backgroundColor: contentType === 'plain' ? theme.colors.primary : theme.colors.surface,
+                  color: contentType === 'plain' ? 'white' : theme.colors.textSecondary,
+                  border: `1px solid ${theme.colors.border}`
+                }}
+              >
+                纯文本
+              </button>
             </div>
-          )}
+          </div>
 
           {/* Content */}
           <div className="flex-1">
@@ -345,28 +864,29 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
               className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
               style={{ color: theme.colors.text }}
             >
-              📄 内容
+              内容
             </label>
-            {contentType === 'markdown' && !isMobile && isInitialized ? (
-              <MarkdownEditor
-                key={`markdown-editor-${entry?.id || 'new'}`}
-                value={content}
-                onChange={setContent}
-                placeholder="使用 Markdown 语法记录你的想法和感受..."
-              />
+            {contentType === 'markdown' ? (
+              <Suspense fallback={sectionFallback}>
+                <MarkdownEditor
+                  key={`markdown-editor-${entry?.id || 'new'}`}
+                  value={content}
+                  onChange={setContent}
+                  placeholder={isMobile ? '使用 Markdown 记录想法...' : '使用 Markdown 语法记录你的想法和感受...'}
+                />
+              </Suspense>
             ) : (
               <textarea
+                data-diary-content-input="true"
                 value={content}
                 onChange={(e) => setContent(e.target.value)}
+                enterKeyHint={isMobile ? 'done' : undefined}
                 rows={isMobile ? 16 : 12}
                 className={`w-full ${isMobile ? 'px-3 py-2' : 'px-4 py-3'} rounded-lg border resize-none focus:outline-none focus:ring-2 transition-all duration-200`}
                 style={{
-                  backgroundColor: theme.colors.surface,
-                  borderColor: theme.colors.border,
-                  color: theme.colors.text,
-                  '--tw-ring-color': theme.colors.primary,
-                  minHeight: isMobile ? '300px' : 'auto'
-                } as React.CSSProperties}
+                  ...controlStyle,
+                  minHeight: isMobile ? '300px' : 'auto',
+                }}
                 placeholder={isMobile ? "记录你的想法和感受..." : "详细记录你的想法和感受..."}
                 required
               />
@@ -381,9 +901,8 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
                 onClick={() => setShowAdvanced(!showAdvanced)}
                 className="px-4 py-2 rounded-lg text-sm transition-all duration-200"
                 style={{
-                  backgroundColor: theme.colors.surface,
+                  ...secondaryButtonStyle,
                   color: theme.colors.primary,
-                  border: `1px solid ${theme.colors.border}`
                 }}
               >
                 {showAdvanced ? '收起高级选项' : '展开高级选项'} ({showAdvanced ? '▲' : '▼'})
@@ -402,104 +921,44 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
                 >
                   🖼️ 图片
                 </label>
-                <ImageUpload
-                  images={images}
-                  onImagesChange={setImages}
-                  maxImages={5}
-                />
+                <Suspense fallback={sectionFallback}>
+                  <ImageUpload
+                    images={images}
+                    onImagesChange={setImages}
+                    maxImages={5}
+                  />
+                </Suspense>
               </div>
 
               {/* Mood and Weather */}
               <div className={`grid grid-cols-1 ${isMobile ? 'gap-3' : 'md:grid-cols-2 gap-4'}`}>
-                <div>
-                  <label
-                    className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
-                    style={{ color: theme.colors.text }}
-                  >
-                    😊 心情
-                  </label>
-                  <div className="space-y-2">
-                    <select
-                      value={mood}
-                      onChange={(e) => handleMoodChange(e.target.value)}
-                      className={`w-full ${isMobile ? 'px-3 py-2' : 'px-3 py-2'} border rounded-md focus:outline-none focus:ring-2 transition-all duration-200`}
-                      style={{
-                        backgroundColor: theme.colors.surface,
-                        borderColor: theme.colors.border,
-                        color: theme.colors.text,
-                        '--tw-ring-color': theme.colors.primary,
-                      } as React.CSSProperties}
-                    >
-                      {moods.map((m) => (
-                        <option key={m.value} value={m.value}>
-                          {m.emoji} {m.label}
-                        </option>
-                      ))}
-                      <option value="custom">✨ 自定义心情</option>
-                    </select>
+                <DiaryFormSelectWithCustomField
+                  label="心情"
+                  value={mood}
+                  options={moods}
+                  customOptionLabel="✨ 自定义心情"
+                  showCustom={showCustomMood}
+                  customValue={customMood}
+                  customPlaceholder="输入自定义心情..."
+                  onSelectChange={handleMoodChange}
+                  onCustomChange={setCustomMood}
+                  theme={theme}
+                  isMobile={isMobile}
+                />
 
-                    {showCustomMood && (
-                      <input
-                        type="text"
-                        value={customMood}
-                        onChange={(e) => setCustomMood(e.target.value)}
-                        placeholder="输入自定义心情..."
-                        className={`w-full ${isMobile ? 'px-3 py-2' : 'px-3 py-2'} border rounded-md focus:outline-none focus:ring-2 transition-all duration-200`}
-                        style={{
-                          backgroundColor: theme.colors.surface,
-                          borderColor: theme.colors.border,
-                          color: theme.colors.text,
-                          '--tw-ring-color': theme.colors.primary,
-                        } as React.CSSProperties}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                <div>
-                  <label
-                    className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
-                    style={{ color: theme.colors.text }}
-                  >
-                    🌤️ 天气
-                  </label>
-                  <div className="space-y-2">
-                    <select
-                      value={weather}
-                      onChange={(e) => handleWeatherChange(e.target.value)}
-                      className={`w-full ${isMobile ? 'px-3 py-2' : 'px-3 py-2'} border rounded-md focus:outline-none focus:ring-2 transition-all duration-200`}
-                      style={{
-                        backgroundColor: theme.colors.surface,
-                        borderColor: theme.colors.border,
-                        color: theme.colors.text,
-                        '--tw-ring-color': theme.colors.primary,
-                      } as React.CSSProperties}
-                    >
-                      {weathers.map((w) => (
-                        <option key={w.value} value={w.value}>
-                          {w.label}
-                        </option>
-                      ))}
-                      <option value="custom">🌈 自定义天气</option>
-                    </select>
-
-                    {showCustomWeather && (
-                      <input
-                        type="text"
-                        value={customWeather}
-                        onChange={(e) => setCustomWeather(e.target.value)}
-                        placeholder="输入自定义天气..."
-                        className={`w-full ${isMobile ? 'px-3 py-2' : 'px-3 py-2'} border rounded-md focus:outline-none focus:ring-2 transition-all duration-200`}
-                        style={{
-                          backgroundColor: theme.colors.surface,
-                          borderColor: theme.colors.border,
-                          color: theme.colors.text,
-                          '--tw-ring-color': theme.colors.primary,
-                        } as React.CSSProperties}
-                      />
-                    )}
-                  </div>
-                </div>
+                <DiaryFormSelectWithCustomField
+                  label="天气"
+                  value={weather}
+                  options={weathers}
+                  customOptionLabel="🌈 自定义天气"
+                  showCustom={showCustomWeather}
+                  customValue={customWeather}
+                  customPlaceholder="输入自定义天气..."
+                  onSelectChange={handleWeatherChange}
+                  onCustomChange={setCustomWeather}
+                  theme={theme}
+                  isMobile={isMobile}
+                />
               </div>
 
               {/* Tags */}
@@ -508,21 +967,18 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
                   className={`block ${isMobile ? 'text-xs' : 'text-sm'} font-medium mb-2`}
                   style={{ color: theme.colors.text }}
                 >
-                  🏷️ 标签
+                  标签
                 </label>
                 <div className="flex gap-2 mb-2">
                   <input
                     type="text"
                     value={tagInput}
+                    autoComplete="off"
+                    enterKeyHint="done"
                     onChange={(e) => setTagInput(e.target.value)}
                     onKeyDown={handleTagKeyDown}
                     className={`flex-1 ${isMobile ? 'px-3 py-2' : 'px-3 py-2'} border rounded-md focus:outline-none focus:ring-2 transition-all duration-200`}
-                    style={{
-                      backgroundColor: theme.colors.surface,
-                      borderColor: theme.colors.border,
-                      color: theme.colors.text,
-                      '--tw-ring-color': theme.colors.primary,
-                    } as React.CSSProperties}
+                    style={controlStyle}
                     placeholder="添加标签..."
                   />
                   <button
@@ -566,26 +1022,35 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
           )}
 
           {/* Location - 始终显示，不在高级选项中 */}
-          <LocationPicker
-            location={location}
-            onLocationChange={setLocation}
-            disabled={loading}
-          />
+          <Suspense fallback={sectionFallback}>
+            <LocationPicker
+              location={location}
+              onLocationChange={setLocation}
+              disabled={loading}
+            />
+          </Suspense>
 
           {/* Actions */}
           <div
-            className={`flex ${isMobile ? 'flex-col gap-2' : 'justify-end gap-3'} pt-4`}
-            style={{ borderTop: `1px solid ${theme.colors.border}` }}
+            className={`flex ${isMobile ? 'sticky bottom-0 -mx-4 flex-col gap-2 px-4 pb-[calc(0.75rem+var(--safe-area-bottom,0px))] pt-3' : 'justify-end gap-3 pt-4'}`}
+            style={{
+              borderTop: `1px solid ${theme.colors.border}`,
+              backgroundColor: isMobile ? theme.colors.background : 'transparent',
+            }}
           >
+            {formStatus && (
+              <div
+                className={`${isMobile ? 'order-first w-full' : 'mr-auto'} inline-flex items-center rounded-full px-3 py-2 text-sm`}
+                style={getStatusPillStyle(theme, formStatus.tone)}
+              >
+                {formStatus.label}
+              </div>
+            )}
             <button
               type="button"
-              onClick={onCancel}
+              onClick={requestClose}
               className={`${isMobile ? 'w-full py-3' : 'px-4 py-2'} rounded-md transition-colors`}
-              style={{
-                color: theme.colors.textSecondary,
-                border: `1px solid ${theme.colors.border}`,
-                backgroundColor: theme.colors.surface
-              }}
+              style={secondaryButtonStyle}
             >
               取消
             </button>
@@ -598,12 +1063,56 @@ export function DiaryForm({ entry, onSave, onCancel, isOpen }: DiaryFormProps) {
                 color: 'white'
               }}
             >
-              <Save className={`${isMobile ? 'w-4 h-4' : 'w-5 h-5'}`} />
               {loading ? '保存中...' : '保存日记'}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+      </form>
+
+      <DiaryFormConfirmDialog
+        isOpen={showDiscardConfirm}
+        onClose={() => setShowDiscardConfirm(false)}
+        ariaLabel="放弃未保存改动确认"
+        title="放弃未保存改动？"
+        description="你刚刚修改的内容还没有保存，关闭后这些改动会丢失。"
+        cancelLabel="继续编辑"
+        confirmLabel="放弃改动"
+        onConfirm={handleDiscardChanges}
+        confirmTone="accent"
+        theme={theme}
+      />
+
+      <DiaryFormConfirmDialog
+        isOpen={showRestoreDraftPrompt && Boolean(draftToRestore)}
+        onClose={handleDiscardStoredDraft}
+        ariaLabel="恢复本地草稿确认"
+        title="恢复上次未完成的草稿？"
+        description={
+          draftToRestore
+            ? `检测到一份未提交的本地草稿，保存时间为 ${new Date(draftToRestore.updatedAt).toLocaleString('zh-CN')}。`
+            : ''
+        }
+        cancelLabel="新建空白"
+        confirmLabel="恢复草稿"
+        onConfirm={handleRestoreDraft}
+        confirmTone="primary"
+        theme={theme}
+      />
+
+      <DiaryFormConfirmDialog
+        isOpen={showResetDraftConfirm}
+        onClose={() => setShowResetDraftConfirm(false)}
+        ariaLabel="清空本地草稿确认"
+        title="清空本地草稿？"
+        description="这会删除当前本地草稿，并将表单恢复为空白状态。这个操作不能撤销。"
+        cancelLabel="取消"
+        confirmLabel="确认清空"
+        onConfirm={() => {
+          setShowResetDraftConfirm(false);
+          handleResetDraft();
+        }}
+        confirmTone="accent"
+        theme={theme}
+      />
+    </ModalShell>
   );
 }

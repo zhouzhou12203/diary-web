@@ -1,103 +1,79 @@
-import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useRef } from 'react';
 import { Lock, Eye, EyeOff } from 'lucide-react';
+import { ModalShell } from './ModalShell';
 import { useThemeContext } from './ThemeProvider';
 import { apiService } from '../services/api';
 
 interface PasswordProtectionProps {
   onAuthenticated: () => void;
+  passwordSettings: PasswordSettings;
 }
 
 interface PasswordSettings {
   enabled: boolean;
-  password: string;
 }
 
 
 
-export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps) {
+export function PasswordProtection({ onAuthenticated, passwordSettings }: PasswordProtectionProps) {
   const { theme } = useThemeContext();
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [passwordSettings, setPasswordSettings] = useState<PasswordSettings>({
-    enabled: false,
-    password: 'diary123'
-  });
+  const isMountedRef = useRef(true);
 
-
-
-  // 从后端加载密码设置
-  const loadPasswordSettings = async () => {
-    try {
-      const settings = await apiService.getAllSettings();
-      const newPasswordSettings = {
-        enabled: settings.app_password_enabled === 'true',
-        password: settings.app_password || 'diary123'
-      };
-      setPasswordSettings(newPasswordSettings);
-
-
-
-      // 如果没有启用密码保护，直接通过验证
-      if (!newPasswordSettings.enabled) {
-        onAuthenticated();
-      }
-    } catch (error) {
-      console.error('加载密码设置失败:', error);
-      // 如果后端加载失败，尝试从localStorage加载
-      const localSettings = localStorage.getItem('diary-password-settings');
-      if (localSettings) {
-        try {
-          const parsed = JSON.parse(localSettings);
-          setPasswordSettings(parsed);
-          if (!parsed.enabled) {
-            onAuthenticated();
-          }
-        } catch (parseError) {
-          console.error('解析本地密码设置失败:', parseError);
-          // 解析失败时使用默认设置（启用密码保护）
-          setPasswordSettings({
-            enabled: true,
-            password: 'diary123'
-          });
-        }
-      } else {
-        // 没有本地设置时使用默认设置（启用密码保护）
-        setPasswordSettings({
-          enabled: true,
-          password: 'diary123'
-        });
-      }
+  const safeSetError = (nextError: string) => {
+    if (!isMountedRef.current) {
+      return;
     }
+
+    setError(nextError);
   };
 
-  // 组件挂载时加载设置
+  const safeSetPassword = (nextPassword: string) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setPassword(nextPassword);
+  };
+
+  const safeSetIsLoading = (nextLoading: boolean) => {
+    if (!isMountedRef.current) {
+      return;
+    }
+
+    setIsLoading(nextLoading);
+  };
   useEffect(() => {
-    loadPasswordSettings();
+    isMountedRef.current = true;
+
+    return () => {
+      isMountedRef.current = false;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!passwordSettings.enabled) {
+      onAuthenticated();
+    }
+  }, [onAuthenticated, passwordSettings.enabled]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setIsLoading(true);
-    setError('');
+    safeSetIsLoading(true);
+    safeSetError('');
 
-    // 模拟验证延迟
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    if (password === passwordSettings.password) {
-      // 记录已通过验证的状态，刷新后免输密码
-      try {
-        localStorage.setItem('diary-app-authenticated', 'true');
-      } catch {}
+    try {
+      await apiService.loginApp(password);
       onAuthenticated();
-    } else {
-      setError('密码错误，请重试');
-      setPassword('');
+    } catch (error) {
+      safeSetError(error instanceof Error ? error.message : '验证失败，请重试');
+      safeSetPassword('');
+    } finally {
+      safeSetIsLoading(false);
     }
-
-    setIsLoading(false);
   };
 
   // 如果密码保护未启用，不显示此组件
@@ -105,73 +81,68 @@ export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps)
     return null;
   }
 
-  return createPortal(
-    <div
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100vw',
-        height: '100vh',
-        zIndex: 9999,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '16px',
-        backgroundColor: 'transparent', // 完全透明，让欢迎页面作为背景
-        backdropFilter: 'blur(2px) brightness(0.8)', // 轻微模糊和降低亮度，但保持透明
-        boxSizing: 'border-box'
+  const shellStyle = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(10, 18, 28, 0.68)' : theme.colors.surface,
+    border: `1px solid ${theme.colors.border}`,
+    boxShadow:
+      theme.mode === 'glass'
+        ? '0 30px 70px rgba(4, 10, 18, 0.34)'
+        : '0 22px 54px rgba(15, 23, 42, 0.12)',
+  };
+
+  const fieldStyle = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.08)' : 'rgba(255, 255, 255, 0.72)',
+    border: `1px solid ${theme.colors.border}`,
+    color: theme.colors.text,
+  };
+
+  return (
+    <ModalShell
+      isOpen={passwordSettings.enabled}
+      zIndex={9999}
+      closeOnBackdropClick={false}
+      backdropStyle={{
+        backgroundColor: 'transparent',
+        backdropFilter: 'blur(4px) brightness(0.82)'
       }}
+      panelClassName={`relative z-10 mx-4 w-full max-w-xl rounded-[2rem] p-6 sm:mx-6 sm:p-8 md:mx-8 md:p-10 ${theme.effects.blur}`}
+      panelStyle={shellStyle}
     >
-      {/* 轻微的遮罩以提高密码框的可读性 */}
-      <div
-        className="absolute inset-0"
-        style={{
-          backgroundColor: 'rgba(0, 0, 0, 0.1)',
-          backdropFilter: 'blur(1px)'
-        }}
-      />
-      
-      <div
-        className={`w-full max-w-lg mx-4 sm:mx-6 md:mx-8 lg:max-w-xl xl:max-w-xl rounded-xl p-6 sm:p-8 md:p-10 ${theme.effects.blur} relative z-10`}
-        style={{
-          backgroundColor: theme.mode === 'glass' ? undefined : theme.colors.surface,
-          border: theme.mode === 'glass' ? undefined : `1px solid ${theme.colors.border}`,
-        }}
-      >
-        <div className="text-center mb-8">
+      <div className="relative z-10">
+        <div className="mb-8 text-center">
           <div
-            className="w-16 h-16 sm:w-18 sm:h-18 md:w-20 md:h-20 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6"
+            className="mx-auto mb-5 inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs uppercase tracking-[0.18em]"
             style={{
-              backgroundColor: theme.mode === 'glass' 
-                ? 'rgba(255, 255, 255, 0.2)' 
-                : `${theme.colors.primary}20`
+              backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.08)' : 'rgba(255, 255, 255, 0.56)',
+              border: `1px solid ${theme.colors.border}`,
+              color: theme.colors.primary,
             }}
           >
-            <Lock
-              className="w-8 h-8 sm:w-9 sm:h-9 md:w-10 md:h-10"
-              style={{ 
-                color: theme.mode === 'glass' ? 'white' : theme.colors.primary 
-              }} 
-            />
+            <Lock className="h-3.5 w-3.5" />
+            Archive Access
           </div>
-          <h2
-            className="text-xl sm:text-2xl md:text-3xl font-bold mb-2 sm:mb-3"
-            style={{ 
-              color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-              textShadow: theme.mode === 'glass' ? '0 2px 4px rgba(0, 0, 0, 0.3)' : 'none'
+
+          <div
+            className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-3xl sm:h-18 sm:w-18 md:h-20 md:w-20"
+            style={{
+              background: `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})`,
+              color: '#ffffff',
             }}
           >
-            访问验证
+            <Lock className="h-8 w-8 sm:h-9 sm:w-9 md:h-10 md:w-10" />
+          </div>
+
+          <h2
+            className="mb-2 text-xl font-semibold tracking-[-0.04em] sm:text-2xl md:text-3xl"
+            style={{ color: theme.colors.text }}
+          >
+            进入日记前，先确认是你。
           </h2>
           <p
             className="text-sm sm:text-base"
-            style={{ 
-              color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary,
-              textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none'
-            }}
+            style={{ color: theme.colors.textSecondary }}
           >
-            请输入密码以访问日记应用
+            这一步只负责验证访问权限，不会打断后续的阅读与记录。
           </p>
         </div>
 
@@ -180,17 +151,14 @@ export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps)
             <input
               type={showPassword ? 'text' : 'password'}
               value={password}
+              autoComplete="current-password"
+              enterKeyHint="done"
               onChange={(e) => setPassword(e.target.value)}
               placeholder="请输入访问密码"
-              className="w-full px-4 py-3 pr-12 sm:px-6 sm:py-4 sm:pr-14 rounded-lg border focus:outline-none focus:ring-2 transition-all text-base sm:text-lg"
+              className="w-full rounded-2xl border px-4 py-3 pr-12 text-base outline-none transition-all sm:px-6 sm:py-4 sm:pr-14 sm:text-lg"
               style={{
-                backgroundColor: theme.mode === 'glass' 
-                  ? 'rgba(255, 255, 255, 0.1)' 
-                  : theme.colors.surface,
-                borderColor: error 
-                  ? '#ef4444' 
-                  : (theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.3)' : theme.colors.border),
-                color: theme.mode === 'glass' ? 'white' : theme.colors.text,
+                ...fieldStyle,
+                borderColor: error ? '#ef4444' : theme.colors.border,
               }}
               required
               disabled={isLoading}
@@ -199,9 +167,7 @@ export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps)
               type="button"
               onClick={() => setShowPassword(!showPassword)}
               className="absolute right-3 sm:right-4 top-1/2 transform -translate-y-1/2 p-1 rounded"
-              style={{
-                color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.7)' : theme.colors.textSecondary
-              }}
+              style={{ color: theme.colors.textSecondary }}
             >
               {showPassword ? <EyeOff className="w-5 h-5 sm:w-6 sm:h-6" /> : <Eye className="w-5 h-5 sm:w-6 sm:h-6" />}
             </button>
@@ -223,18 +189,11 @@ export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps)
           <button
             type="submit"
             disabled={isLoading || !password.trim()}
-            className="w-full py-3 sm:py-4 rounded-lg font-medium text-base sm:text-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="primary-button w-full rounded-2xl py-3 text-base font-medium transition-all duration-200 disabled:cursor-not-allowed disabled:opacity-50 sm:py-4 sm:text-lg"
             style={{
-              background: theme.mode === 'glass'
-                ? 'linear-gradient(135deg, rgba(168, 85, 247, 0.9) 0%, rgba(139, 92, 246, 0.9) 100%)'
-                : theme.colors.primary,
+              background: `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})`,
               color: 'white',
-              border: theme.mode === 'glass' ? '1px solid rgba(255, 255, 255, 0.3)' : 'none',
-              backdropFilter: theme.mode === 'glass' ? 'blur(10px)' : 'none',
-              boxShadow: theme.mode === 'glass'
-                ? '0 8px 32px rgba(168, 85, 247, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2)'
-                : undefined,
-              textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none'
+              boxShadow: '0 16px 36px rgba(37, 99, 235, 0.2)',
             }}
           >
             {isLoading ? '验证中...' : '进入应用'}
@@ -242,18 +201,11 @@ export function PasswordProtection({ onAuthenticated }: PasswordProtectionProps)
         </form>
 
         <div className="mt-6 text-center">
-          <p 
-            className="text-xs"
-            style={{ 
-              color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.6)' : theme.colors.textSecondary,
-              textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.3)' : 'none'
-            }}
-          >
-            密码保护可在管理员面板中关闭
+          <p className="text-xs leading-6" style={{ color: theme.colors.textSecondary }}>
+            密码保护可在管理员面板中关闭。验证通过后会由服务端会话保持登录状态。
           </p>
         </div>
       </div>
-    </div>,
-    document.body
+    </ModalShell>
   );
 }

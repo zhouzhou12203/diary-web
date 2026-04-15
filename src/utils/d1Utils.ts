@@ -82,69 +82,6 @@ export async function verifyDeletion(
 }
 
 /**
- * 处理D1数据库操作的一致性问题
- */
-export class D1ConsistencyHelper {
-  /**
-   * 执行删除操作并验证结果
-   */
-  static async deleteWithVerification<T>(
-    deleteOperation: () => Promise<T>,
-    verifyOperation: () => Promise<boolean>,
-    options: RetryOptions = {}
-  ): Promise<T> {
-    // 执行删除操作
-    const result = await deleteOperation();
-    
-    // 验证删除是否成功
-    const isDeleted = await verifyDeletion(verifyOperation, options);
-    
-    if (!isDeleted) {
-      throw new Error('删除操作未能完全同步，请稍后重试');
-    }
-    
-    return result;
-  }
-
-  /**
-   * 等待数据库同步
-   */
-  static async waitForSync(delay: number = 500): Promise<void> {
-    await new Promise(resolve => setTimeout(resolve, delay));
-  }
-
-  /**
-   * 检查操作是否需要重试
-   */
-  static shouldRetry(error: Error, attempt: number, maxRetries: number): boolean {
-    if (attempt >= maxRetries) {
-      return false;
-    }
-    
-    // 对于某些特定错误，不进行重试
-    const nonRetryableErrors = [
-      '无效的ID',
-      '权限不足',
-      '参数错误'
-    ];
-    
-    return !nonRetryableErrors.some(msg => error.message.includes(msg));
-  }
-}
-
-/**
- * 创建一个带有一致性处理的API客户端装饰器
- */
-export function withConsistency<T extends (...args: any[]) => Promise<any>>(
-  apiFunction: T,
-  options: RetryOptions = {}
-): T {
-  return (async (...args: Parameters<T>) => {
-    return withRetry(() => apiFunction(...args), options);
-  }) as T;
-}
-
-/**
  * 用于显示用户友好的错误消息
  */
 export function getConsistencyErrorMessage(error: Error): string {

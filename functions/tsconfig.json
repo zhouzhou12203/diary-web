@@ -6,6 +6,7 @@
     "moduleResolution": "bundler",
     "types": ["@cloudflare/workers-types"],
     "allowSyntheticDefaultImports": true,
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "allowJs": true,
     "strict": true,

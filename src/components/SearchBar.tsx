@@ -1,439 +1,1046 @@
-import { useState, useEffect } from 'react';
-import { Search, X, Filter, Tag, Calendar } from 'lucide-react';
+import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
+import { Calendar, Filter, Search, Tag, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
-import { useAdminAuth } from './AdminPanel';
-import { useQuickFiltersSettings } from '../hooks/useQuickFiltersSettings';
-import { DiaryEntry } from '../types';
-import { normalizeTimeString } from '../utils/timeUtils';
+import { useAdminAuth } from './AdminAuthContext';
+import type { DiaryEntry } from '../types/index.ts';
+import { normalizeTimeString } from '../utils/timeUtils.ts';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface SearchBarProps {
   entries: DiaryEntry[];
+  availableTags: string[];
+  availableYears: string[];
+  availableMonthsByYear: Record<string, string[]>;
+  untaggedEntryCount: number;
   onSearchResults: (results: DiaryEntry[]) => void;
   onClearSearch: () => void;
+  onSearchPendingChange?: (pending: boolean) => void;
+  onSearchQueryChange?: (query: string) => void;
+  onSearchSummaryChange?: (items: Array<{ id: string; label: string }>) => void;
+  clearRequest?: { targetId: string; nonce: number } | null;
+  resetSignal?: number;
 }
 
-export function SearchBar({ entries, onSearchResults, onClearSearch }: SearchBarProps) {
-  const { theme } = useThemeContext();
-  const { isAdminAuthenticated } = useAdminAuth();
-  const { settings: quickFiltersSettings } = useQuickFiltersSettings();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [showFilters, setShowFilters] = useState(false);
-  const [searchFilters, setSearchFilters] = useState({
-    searchInTitle: true,
-    searchInContent: true,
-    searchInTags: true,
-    mood: '',
-    weather: '',
-    dateRange: '',
-    selectedTag: '',
-    selectedYear: '',
-    selectedMonth: '',
-  });
+interface SearchFilters {
+  searchInTitle: boolean;
+  searchInContent: boolean;
+  searchInTags: boolean;
+  mood: string;
+  weather: string;
+  dateRange: string;
+  selectedTag: string;
+  selectedYear: string;
+  selectedMonth: string;
+}
 
-  // 执行搜索
-  const performSearch = (query: string, filters: typeof searchFilters) => {
-    if (!query.trim()) {
-      onClearSearch();
+const initialFilters: SearchFilters = {
+  searchInTitle: true,
+  searchInContent: true,
+  searchInTags: true,
+  mood: '',
+  weather: '',
+  dateRange: '',
+  selectedTag: '',
+  selectedYear: '',
+  selectedMonth: '',
+};
+
+const RECENT_SEARCHES_KEY = 'diary_recent_searches';
+const MAX_RECENT_SEARCHES = 6;
+const MAX_SEARCH_SUGGESTIONS = 8;
+const SEARCH_SCOPE_OPTIONS = [
+  { key: 'searchInTitle', label: '标题' },
+  { key: 'searchInContent', label: '正文' },
+  { key: 'searchInTags', label: '标签' },
+] as const;
+const MOOD_LABELS: Record<string, string> = {
+  happy: '开心',
+  sad: '难过',
+  neutral: '平静',
+  excited: '兴奋',
+  anxious: '焦虑',
+  peaceful: '平和',
+};
+const WEATHER_LABELS: Record<string, string> = {
+  sunny: '晴天',
+  cloudy: '多云',
+  rainy: '雨天',
+  snowy: '雪天',
+};
+const DATE_RANGE_LABELS: Record<string, string> = {
+  today: '今天',
+  week: '最近一周',
+  month: '最近一个月',
+};
+
+type SearchSuggestionItem = {
+  value: string;
+  type: 'tag' | 'title';
+  matchCount: number;
+};
+
+type SearchKeyboardOption = {
+  id: string;
+  label: string;
+  value: string;
+  type: 'recent' | 'tag' | 'title';
+};
+
+type FilterSelectOption = {
+  value: string;
+  label: string;
+};
+
+type SearchStatusPillProps = {
+  controlStyle: CSSProperties;
+  color: string;
+  children: ReactNode;
+};
+
+type SearchSuggestionChipProps = {
+  optionId: string;
+  selected: boolean;
+  onClick: () => void;
+  controlStyle: CSSProperties;
+  inactiveColor: string;
+  activeBackground: string;
+  children: ReactNode;
+};
+
+type SearchFilterCardProps = {
+  controlStyle: CSSProperties;
+  title: string;
+  icon?: ReactNode;
+  isMobile?: boolean;
+  children: ReactNode;
+};
+
+type SearchFilterSelectProps = Omit<SearchFilterCardProps, 'children'> & {
+  value: string;
+  options: FilterSelectOption[];
+  onChange: (value: string) => void;
+};
+
+function createFilterSelectOptions(defaultLabel: string, labels: Record<string, string>): FilterSelectOption[] {
+  return [{ value: '', label: defaultLabel }, ...Object.entries(labels).map(([value, label]) => ({ value, label }))];
+}
+
+const moodOptions = createFilterSelectOptions('所有心情', MOOD_LABELS);
+const weatherOptions = createFilterSelectOptions('所有天气', WEATHER_LABELS);
+const dateRangeOptions = createFilterSelectOptions('所有时间', DATE_RANGE_LABELS);
+
+function normalizeSuggestionValue(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function collectTitleSuggestions(entries: DiaryEntry[]) {
+  const titleSet = new Set<string>();
+
+  entries.forEach((entry) => {
+    const title = entry.title?.trim();
+
+    if (!title || title === '无标题' || title.length < 2) {
       return;
     }
 
-    const results = entries.filter(entry => {
-      // 跳过隐藏的日记（普通用户看不到）
-      if (entry.hidden) return false;
+    titleSet.add(title);
+  });
 
-      const queryLower = query.toLowerCase();
-      let matchesText = false;
+  return Array.from(titleSet);
+}
 
-      // 文本搜索
-      if (filters.searchInTitle && entry.title?.toLowerCase().includes(queryLower)) {
-        matchesText = true;
-      }
-      if (filters.searchInContent && entry.content.toLowerCase().includes(queryLower)) {
-        matchesText = true;
-      }
-      if (filters.searchInTags && entry.tags?.some(tag => tag.toLowerCase().includes(queryLower))) {
-        matchesText = true;
-      }
+function countSuggestionMatches(entries: DiaryEntry[], value: string, type: 'tag' | 'title') {
+  if (type === 'tag') {
+    return entries.filter((entry) => entry.tags?.includes(value)).length;
+  }
 
-      // 心情过滤
-      if (filters.mood && entry.mood !== filters.mood) {
-        return false;
-      }
+  return entries.filter((entry) => entry.title?.trim() === value).length;
+}
 
-      // 天气过滤
-      if (filters.weather && entry.weather !== filters.weather) {
-        return false;
-      }
+function sortSuggestions(
+  suggestions: SearchSuggestionItem[],
+  query: string,
+  recentSearches: string[]
+) {
+  const normalizedQuery = normalizeSuggestionValue(query);
+  const recentIndex = new Map(recentSearches.map((item, index) => [normalizeSuggestionValue(item), index]));
 
-      // 标签过滤
-      if (filters.selectedTag) {
-        if (filters.selectedTag === '__no_tags__') {
-          // 筛选无标签的日记
-          if (entry.tags && entry.tags.length > 0) {
-            return false;
-          }
-        } else {
-          // 筛选有特定标签的日记
-          if (!entry.tags || !entry.tags.includes(filters.selectedTag)) {
-            return false;
-          }
-        }
-      }
+  return [...suggestions].sort((left, right) => {
+    const leftNormalized = normalizeSuggestionValue(left.value);
+    const rightNormalized = normalizeSuggestionValue(right.value);
+    const leftStartsWithQuery = normalizedQuery ? leftNormalized.startsWith(normalizedQuery) : false;
+    const rightStartsWithQuery = normalizedQuery ? rightNormalized.startsWith(normalizedQuery) : false;
 
-      // 年份过滤
-      if (filters.selectedYear) {
-        const entryDate = new Date(normalizeTimeString(entry.created_at!));
-        if (entryDate.getFullYear().toString() !== filters.selectedYear) {
-          return false;
-        }
-      }
+    if (leftStartsWithQuery !== rightStartsWithQuery) {
+      return leftStartsWithQuery ? -1 : 1;
+    }
 
-      // 月份过滤
-      if (filters.selectedMonth) {
-        const entryDate = new Date(normalizeTimeString(entry.created_at!));
-        const entryMonth = (entryDate.getMonth() + 1).toString().padStart(2, '0');
-        if (entryMonth !== filters.selectedMonth) {
-          return false;
-        }
-      }
+    const leftRecentIndex = recentIndex.get(leftNormalized) ?? Number.POSITIVE_INFINITY;
+    const rightRecentIndex = recentIndex.get(rightNormalized) ?? Number.POSITIVE_INFINITY;
 
-      // 日期范围过滤
-      if (filters.dateRange) {
-        const entryDate = new Date(normalizeTimeString(entry.created_at!));
-        const now = new Date();
+    if (leftRecentIndex !== rightRecentIndex) {
+      return leftRecentIndex - rightRecentIndex;
+    }
 
-        switch (filters.dateRange) {
-          case 'today':
-            if (entryDate.toDateString() !== now.toDateString()) return false;
-            break;
-          case 'week':
-            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            if (entryDate < weekAgo) return false;
-            break;
-          case 'month':
-            const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            if (entryDate < monthAgo) return false;
-            break;
-        }
-      }
+    if (left.matchCount !== right.matchCount) {
+      return right.matchCount - left.matchCount;
+    }
 
-      return matchesText;
+    if (left.value.length !== right.value.length) {
+      return left.value.length - right.value.length;
+    }
+
+    return left.value.localeCompare(right.value, 'zh-CN');
+  });
+}
+
+function hasActiveFilters(filters: SearchFilters) {
+  return Object.entries(filters).some(([key, value]) => {
+    if (key.startsWith('searchIn')) {
+      return value === false;
+    }
+
+    return value !== '';
+  });
+}
+
+function SearchStatusPill({ controlStyle, color, children }: SearchStatusPillProps) {
+  return (
+    <span className="status-pill" style={{ ...controlStyle, color }}>
+      {children}
+    </span>
+  );
+}
+
+function SearchSuggestionChip({
+  optionId,
+  selected,
+  onClick,
+  controlStyle,
+  inactiveColor,
+  activeBackground,
+  children,
+}: SearchSuggestionChipProps) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      role="option"
+      aria-selected={selected}
+      id={`search-option-${optionId}`}
+      className="status-pill transition-transform duration-200 hover:-translate-y-0.5"
+      style={{
+        ...controlStyle,
+        color: selected ? '#ffffff' : inactiveColor,
+        background: selected ? activeBackground : controlStyle.backgroundColor,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function SearchFilterCard({ controlStyle, title, icon, isMobile = false, children }: SearchFilterCardProps) {
+  return (
+    <div className={`space-y-2 rounded-2xl ${isMobile ? 'p-3' : 'p-4'}`} style={controlStyle}>
+      <div className={`inline-flex items-center gap-2 font-medium ${isMobile ? 'text-xs' : 'text-sm'}`} style={{ color: controlStyle.color }}>
+        {icon}
+        {title}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function SearchFilterSelect({ controlStyle, title, icon, isMobile = false, value, options, onChange }: SearchFilterSelectProps) {
+  return (
+    <SearchFilterCard controlStyle={controlStyle} title={title} icon={icon} isMobile={isMobile}>
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        aria-label={title}
+        className={`w-full rounded-xl border outline-none ${isMobile ? 'px-3 py-2 text-sm' : 'px-3 py-2 text-sm'}`}
+        style={controlStyle}
+      >
+        {options.map((option) => (
+          <option key={option.value || '__all__'} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </SearchFilterCard>
+  );
+}
+
+function getSearchSummaryItems(query: string, filters: SearchFilters) {
+  const items: Array<{ id: string; label: string }> = [];
+  const trimmedQuery = query.trim();
+
+  if (trimmedQuery) {
+    items.push({ id: 'query', label: `关键词：${trimmedQuery}` });
+  }
+
+  const enabledScopes = [
+    filters.searchInTitle ? '标题' : null,
+    filters.searchInContent ? '正文' : null,
+    filters.searchInTags ? '标签' : null,
+  ].filter(Boolean) as string[];
+
+  if (enabledScopes.length !== 3) {
+    items.push({ id: 'scope', label: `范围：${enabledScopes.length > 0 ? enabledScopes.join(' / ') : '未选择'}` });
+  }
+
+  if (filters.mood) {
+    items.push({ id: 'mood', label: `心情：${MOOD_LABELS[filters.mood] || filters.mood}` });
+  }
+
+  if (filters.weather) {
+    items.push({ id: 'weather', label: `天气：${WEATHER_LABELS[filters.weather] || filters.weather}` });
+  }
+
+  if (filters.dateRange) {
+    items.push({ id: 'dateRange', label: `时间：${DATE_RANGE_LABELS[filters.dateRange] || filters.dateRange}` });
+  }
+
+  if (filters.selectedTag) {
+    items.push({
+      id: 'selectedTag',
+      label: filters.selectedTag === '__no_tags__' ? '标签：无标签' : `标签：#${filters.selectedTag}`,
     });
+  }
 
-    onSearchResults(results);
+  if (filters.selectedYear) {
+    items.push({ id: 'selectedYear', label: `年份：${filters.selectedYear}年` });
+  }
+
+  if (filters.selectedMonth) {
+    items.push({ id: 'selectedMonth', label: `月份：${parseInt(filters.selectedMonth, 10)}月` });
+  }
+
+  return items;
+}
+
+export function SearchBar({
+  entries,
+  availableTags,
+  availableYears,
+  availableMonthsByYear,
+  untaggedEntryCount,
+  onSearchResults,
+  onClearSearch,
+  onSearchPendingChange,
+  onSearchQueryChange,
+  onSearchSummaryChange,
+  clearRequest = null,
+  resetSignal = 0,
+}: SearchBarProps) {
+  const { theme } = useThemeContext();
+  const { isAdminAuthenticated } = useAdminAuth();
+  const isMobile = useIsMobile();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  const [searchFilters, setSearchFilters] = useState<SearchFilters>(initialFilters);
+  const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [isSearchInputFocused, setIsSearchInputFocused] = useState(false);
+  const [highlightedOptionIndex, setHighlightedOptionIndex] = useState(-1);
+  const deferredEntries = useDeferredValue(entries);
+  const deferredSearchQuery = useDeferredValue(searchQuery);
+  const deferredSearchFilters = useDeferredValue(searchFilters);
+
+  const inputShellStyle: CSSProperties = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.08)' : 'rgba(255, 255, 255, 0.68)',
+    border: `1px solid ${theme.colors.border}`,
+    boxShadow:
+      theme.mode === 'glass'
+        ? '0 18px 36px rgba(4, 10, 18, 0.18)'
+        : '0 10px 24px rgba(15, 23, 42, 0.06)',
   };
 
-  // 监听搜索查询变化
+  const controlStyle: CSSProperties = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(10, 18, 28, 0.52)' : theme.colors.surface,
+    border: `1px solid ${theme.colors.border}`,
+    color: theme.colors.text,
+  };
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+
+    if (!searchFilters.searchInTitle || !searchFilters.searchInContent || !searchFilters.searchInTags) {
+      count += 1;
+    }
+    if (searchFilters.mood) count += 1;
+    if (searchFilters.weather) count += 1;
+    if (searchFilters.dateRange) count += 1;
+    if (searchFilters.selectedTag) count += 1;
+    if (searchFilters.selectedYear) count += 1;
+    if (searchFilters.selectedMonth) count += 1;
+
+    return count;
+  }, [searchFilters]);
+
+  const searchSuggestions = useMemo(() => {
+    const query = normalizeSuggestionValue(deferredSearchQuery);
+    const tagSuggestions: SearchSuggestionItem[] = [];
+    const titleSuggestions: SearchSuggestionItem[] = [];
+    const seen = new Set<string>();
+    const visibleEntries = deferredEntries.filter((entry) => isAdminAuthenticated || !entry.hidden);
+
+    if (deferredSearchFilters.searchInTags) {
+      availableTags.forEach((tag) => {
+        const value = tag.trim();
+        if (!value) {
+          return;
+        }
+
+        const normalizedValue = normalizeSuggestionValue(value);
+        if ((query && !normalizedValue.includes(query)) || seen.has(normalizedValue)) {
+          return;
+        }
+
+        seen.add(normalizedValue);
+        tagSuggestions.push({
+          value,
+          type: 'tag',
+          matchCount: countSuggestionMatches(visibleEntries, value, 'tag'),
+        });
+      });
+    }
+
+    if (deferredSearchFilters.searchInTitle) {
+      collectTitleSuggestions(visibleEntries).forEach((title) => {
+        const normalizedValue = normalizeSuggestionValue(title);
+        if ((query && !normalizedValue.includes(query)) || seen.has(normalizedValue)) {
+          return;
+        }
+
+        seen.add(normalizedValue);
+        titleSuggestions.push({
+          value: title,
+          type: 'title',
+          matchCount: countSuggestionMatches(visibleEntries, title, 'title'),
+        });
+      });
+    }
+
+    return {
+      tags: sortSuggestions(tagSuggestions, searchQuery, recentSearches).slice(0, Math.ceil(MAX_SEARCH_SUGGESTIONS / 2)),
+      titles: sortSuggestions(titleSuggestions, searchQuery, recentSearches).slice(0, Math.floor(MAX_SEARCH_SUGGESTIONS / 2)),
+    };
+  }, [availableTags, deferredEntries, deferredSearchFilters.searchInTags, deferredSearchFilters.searchInTitle, deferredSearchQuery, isAdminAuthenticated, recentSearches, searchQuery]);
+
+  const suggestionsDisabledByScope = !searchFilters.searchInTags && !searchFilters.searchInTitle;
+  const keyboardOptions = useMemo<SearchKeyboardOption[]>(() => {
+    const options: SearchKeyboardOption[] = [];
+
+    if (recentSearches.length > 0 && (!searchQuery || isSearchInputFocused)) {
+      recentSearches.forEach((item) => {
+        options.push({
+          id: `recent-${item}`,
+          label: item,
+          value: item,
+          type: 'recent',
+        });
+      });
+    }
+
+    if (!suggestionsDisabledByScope && isSearchInputFocused) {
+      searchSuggestions.tags.forEach((item) => {
+        options.push({
+          id: `tag-${item.value}`,
+          label: `#${item.value}`,
+          value: item.value,
+          type: 'tag',
+        });
+      });
+
+      searchSuggestions.titles.forEach((item) => {
+        options.push({
+          id: `title-${item.value}`,
+          label: item.value,
+          value: item.value,
+          type: 'title',
+        });
+      });
+    }
+
+    return options;
+  }, [isSearchInputFocused, recentSearches, searchQuery, searchSuggestions.tags, searchSuggestions.titles, suggestionsDisabledByScope]);
+  const activeOptionId = highlightedOptionIndex >= 0 ? keyboardOptions[highlightedOptionIndex]?.id : undefined;
+  const hasSearchQuery = Boolean(searchQuery.trim());
+  const visibleRecentSearches = isMobile ? recentSearches.slice(0, 4) : recentSearches;
+  const shouldShowRecentSearches = visibleRecentSearches.length > 0 && isSearchInputFocused && !hasSearchQuery;
+  const shouldShowSuggestions =
+    isSearchInputFocused &&
+    hasSearchQuery &&
+    (suggestionsDisabledByScope || searchSuggestions.tags.length > 0 || searchSuggestions.titles.length > 0);
+  const shouldShowListbox = shouldShowRecentSearches || shouldShowSuggestions;
+  const candidateAnnouncement = shouldShowListbox
+    ? `当前有 ${keyboardOptions.length} 个候选项，可使用上下方向键切换，回车确认。`
+    : '当前没有可用候选项。';
+  const activeSuggestionBackground = `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})`;
+  const suggestionScopeText = searchFilters.searchInTitle && searchFilters.searchInTags
+    ? '跟随标题与标签范围'
+    : searchFilters.searchInTitle
+      ? '仅跟随标题范围'
+      : searchFilters.searchInTags
+        ? '仅跟随标签范围'
+        : '建议已关闭';
+
+  const saveRecentSearches = (items: string[]) => {
+    setRecentSearches(items);
+    localStorage.setItem(RECENT_SEARCHES_KEY, JSON.stringify(items));
+  };
+
+  const pushRecentSearch = (value: string) => {
+    const trimmedValue = value.trim();
+
+    if (trimmedValue.length < 2) {
+      return;
+    }
+
+    const nextItems = [trimmedValue, ...recentSearches.filter((item) => item !== trimmedValue)].slice(0, MAX_RECENT_SEARCHES);
+    saveRecentSearches(nextItems);
+  };
+
+  const clearRecentSearches = () => {
+    saveRecentSearches([]);
+  };
+
   useEffect(() => {
-    const timeoutId = setTimeout(() => {
-      performSearch(searchQuery, searchFilters);
-    }, 300); // 防抖
+    try {
+      const saved = localStorage.getItem(RECENT_SEARCHES_KEY);
+      if (!saved) {
+        return;
+      }
 
-    return () => clearTimeout(timeoutId);
-  }, [searchQuery, searchFilters, entries]);
+      const parsed = JSON.parse(saved);
+      if (Array.isArray(parsed)) {
+        setRecentSearches(parsed.filter((item): item is string => typeof item === 'string').slice(0, MAX_RECENT_SEARCHES));
+      }
+    } catch {
+      setRecentSearches([]);
+    }
+  }, []);
 
-  const handleClearSearch = () => {
+  useEffect(() => {
+    onSearchQueryChange?.(searchQuery.trim());
+  }, [onSearchQueryChange, searchQuery]);
+
+  useEffect(() => {
+    onSearchSummaryChange?.(getSearchSummaryItems(searchQuery, searchFilters));
+  }, [onSearchSummaryChange, searchFilters, searchQuery]);
+
+  useEffect(() => {
+    if (!clearRequest) {
+      return;
+    }
+
+    switch (clearRequest.targetId) {
+      case 'query':
+        setSearchQuery('');
+        break;
+      case 'scope':
+        setSearchFilters((prev) => ({
+          ...prev,
+          searchInTitle: true,
+          searchInContent: true,
+          searchInTags: true,
+        }));
+        break;
+      case 'mood':
+      case 'weather':
+      case 'dateRange':
+      case 'selectedTag':
+      case 'selectedMonth':
+        setSearchFilters((prev) => ({ ...prev, [clearRequest.targetId]: '' }));
+        break;
+      case 'selectedYear':
+        setSearchFilters((prev) => ({ ...prev, selectedYear: '', selectedMonth: '' }));
+        break;
+      default:
+        break;
+    }
+  }, [clearRequest]);
+
+  useEffect(() => {
     setSearchQuery('');
-    onClearSearch();
-  };
+    setShowFilters(false);
+    setSearchFilters(initialFilters);
+    setHighlightedOptionIndex(-1);
+  }, [resetSignal]);
 
-  // 获取所有可用的标签
-  const getAllTags = () => {
-    const tagSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.tags) {
-        entry.tags.forEach(tag => tagSet.add(tag));
+  useEffect(() => {
+    if (keyboardOptions.length === 0) {
+      setHighlightedOptionIndex(-1);
+      return;
+    }
+
+    setHighlightedOptionIndex((previous) => previous >= keyboardOptions.length ? -1 : previous);
+  }, [keyboardOptions]);
+
+  useEffect(() => {
+    if (!isSearchInputFocused) {
+      pushRecentSearch(searchQuery);
+    }
+  }, [isSearchInputFocused, searchQuery]);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      const query = deferredSearchQuery.trim().toLowerCase();
+      const activeFilters = hasActiveFilters(deferredSearchFilters);
+
+      if (!query && !activeFilters) {
+        onSearchPendingChange?.(false);
+        onClearSearch();
+        return;
       }
-    });
-    return Array.from(tagSet).sort();
-  };
 
-  // 获取所有可用的年份
-  const getAllYears = () => {
-    const yearSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.created_at) {
-        const year = new Date(normalizeTimeString(entry.created_at)).getFullYear().toString();
-        yearSet.add(year);
-      }
-    });
-    return Array.from(yearSet).sort((a, b) => parseInt(b) - parseInt(a)); // 降序排列
-  };
+      const results = deferredEntries.filter((entry) => {
+        let matchesText = !query;
 
-  // 获取指定年份的所有月份
-  const getMonthsForYear = (year: string) => {
-    const monthSet = new Set<string>();
-    entries.forEach(entry => {
-      if (!entry.hidden && entry.created_at) {
-        const entryDate = new Date(normalizeTimeString(entry.created_at));
-        if (entryDate.getFullYear().toString() === year) {
-          const month = (entryDate.getMonth() + 1).toString().padStart(2, '0');
-          monthSet.add(month);
+        if (query) {
+          if (deferredSearchFilters.searchInTitle && entry.title?.toLowerCase().includes(query)) {
+            matchesText = true;
+          }
+          if (deferredSearchFilters.searchInContent && entry.content.toLowerCase().includes(query)) {
+            matchesText = true;
+          }
+          if (deferredSearchFilters.searchInTags && entry.tags?.some((tag) => tag.toLowerCase().includes(query))) {
+            matchesText = true;
+          }
         }
-      }
-    });
-    return Array.from(monthSet).sort((a, b) => parseInt(b) - parseInt(a)); // 降序排列
-  };
 
-  // 获取无标签日记的数量
-  const getNoTagsCount = () => {
-    return entries.filter(entry => !entry.hidden && (!entry.tags || entry.tags.length === 0)).length;
-  };
+        if (!matchesText) return false;
+        if (deferredSearchFilters.mood && entry.mood !== deferredSearchFilters.mood) return false;
+        if (deferredSearchFilters.weather && entry.weather !== deferredSearchFilters.weather) return false;
 
-  // 只有管理员认证后才显示搜索框
+        if (deferredSearchFilters.selectedTag) {
+          if (deferredSearchFilters.selectedTag === '__no_tags__') {
+            if (entry.tags && entry.tags.length > 0) return false;
+          } else if (!entry.tags || !entry.tags.includes(deferredSearchFilters.selectedTag)) {
+            return false;
+          }
+        }
+
+        const entryDate = new Date(normalizeTimeString(entry.created_at!));
+
+        if (deferredSearchFilters.selectedYear && entryDate.getFullYear().toString() !== deferredSearchFilters.selectedYear) {
+          return false;
+        }
+
+        if (deferredSearchFilters.selectedMonth) {
+          const entryMonth = (entryDate.getMonth() + 1).toString().padStart(2, '0');
+          if (entryMonth !== deferredSearchFilters.selectedMonth) {
+            return false;
+          }
+        }
+
+        if (deferredSearchFilters.dateRange) {
+          const now = new Date();
+
+          switch (deferredSearchFilters.dateRange) {
+            case 'today':
+              if (entryDate.toDateString() !== now.toDateString()) return false;
+              break;
+            case 'week': {
+              const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+              if (entryDate < weekAgo) return false;
+              break;
+            }
+            case 'month': {
+              const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+              if (entryDate < monthAgo) return false;
+              break;
+            }
+          }
+        }
+
+        return true;
+      });
+
+      onSearchPendingChange?.(false);
+      onSearchResults(results);
+    }, 220);
+
+    const hasPendingSearch = Boolean(searchQuery.trim()) || hasActiveFilters(searchFilters);
+    onSearchPendingChange?.(hasPendingSearch);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [deferredEntries, deferredSearchFilters, deferredSearchQuery, onClearSearch, onSearchPendingChange, onSearchResults, searchFilters, searchQuery]);
+
   if (!isAdminAuthenticated) {
     return null;
   }
 
+  const shouldShowExtendedFilters = availableTags.length > 0 || untaggedEntryCount > 0 || availableYears.length > 0;
+  const availableMonthsForYear = searchFilters.selectedYear
+    ? availableMonthsByYear[searchFilters.selectedYear] || []
+    : [];
+
+  const resetSearch = () => {
+    setSearchQuery('');
+    setSearchFilters(initialFilters);
+    onClearSearch();
+  };
+
+  const handleSearchInputKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === 'ArrowDown') {
+      if (keyboardOptions.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      setHighlightedOptionIndex((previous) => (previous + 1) % keyboardOptions.length);
+      return;
+    }
+
+    if (event.key === 'ArrowUp') {
+      if (keyboardOptions.length === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      setHighlightedOptionIndex((previous) => (previous <= 0 ? keyboardOptions.length - 1 : previous - 1));
+      return;
+    }
+
+    if (event.key === 'Enter') {
+      if (highlightedOptionIndex >= 0 && keyboardOptions[highlightedOptionIndex]) {
+        event.preventDefault();
+        handleSelectQueryValue(keyboardOptions[highlightedOptionIndex].value);
+        return;
+      }
+
+      pushRecentSearch(searchQuery);
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      setHighlightedOptionIndex(-1);
+      setIsSearchInputFocused(false);
+    }
+  };
+
+  const handleSelectQueryValue = (value: string) => {
+    setSearchQuery(value);
+    setShowFilters(false);
+    setHighlightedOptionIndex(-1);
+    pushRecentSearch(value);
+  };
+
   return (
-    <div className="space-y-4">
-      {/* 主搜索框 */}
-      <div className="relative">
-        <div className="absolute left-3 top-1/2 transform -translate-y-1/2">
-          <Search className="w-5 h-5" style={{ color: theme.colors.textSecondary }} />
-        </div>
-        
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="搜索日记内容、标题、标签..."
-          className="w-full pl-10 pr-20 py-3 rounded-lg border focus:outline-none focus:ring-2 transition-all"
-          style={{
-            backgroundColor: theme.mode === 'glass' 
-              ? 'rgba(255, 255, 255, 0.1)' 
-              : theme.colors.surface,
-            borderColor: theme.mode === 'glass' 
-              ? 'rgba(255, 255, 255, 0.3)' 
-              : theme.colors.border,
-            color: theme.mode === 'glass' ? 'white' : theme.colors.text,
-            // focusRingColor: theme.colors.primary,
-          }}
-        />
-
-        <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex items-center gap-2">
-          {searchQuery && (
-            <button
-              onClick={handleClearSearch}
-              className="p-1 rounded-full hover:bg-opacity-80 transition-colors"
-              style={{ backgroundColor: theme.colors.border }}
-            >
-              <X className="w-4 h-4" style={{ color: theme.colors.text }} />
-            </button>
-          )}
-          
-          <button
-            onClick={() => setShowFilters(!showFilters)}
-            className={`p-1 rounded-full transition-colors ${showFilters ? 'bg-opacity-100' : 'hover:bg-opacity-80'}`}
-            style={{ 
-              backgroundColor: showFilters ? theme.colors.primary : theme.colors.border,
-              color: showFilters ? 'white' : theme.colors.text
-            }}
-          >
-            <Filter className="w-4 h-4" />
-          </button>
-        </div>
-      </div>
-
-      {/* 高级过滤器 */}
-      {showFilters && (
-        <div 
-          className="p-4 rounded-lg border space-y-4"
-          style={{
-            backgroundColor: theme.mode === 'glass' 
-              ? 'rgba(255, 255, 255, 0.1)' 
-              : theme.colors.surface,
-            borderColor: theme.mode === 'glass' 
-              ? 'rgba(255, 255, 255, 0.3)' 
-              : theme.colors.border,
-          }}
-        >
-          <h4 className="font-medium" style={{ color: theme.colors.text }}>
-            搜索选项
-          </h4>
-          
-          {/* 搜索范围 */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: theme.colors.text }}>
-              搜索范围
-            </label>
-            <div className="flex flex-wrap gap-3">
-              {[
-                { key: 'searchInTitle', label: '标题' },
-                { key: 'searchInContent', label: '内容' },
-                { key: 'searchInTags', label: '标签' },
-              ].map(({ key, label }) => (
-                <label key={key} className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={searchFilters[key as keyof typeof searchFilters] as boolean}
-                    onChange={(e) => setSearchFilters(prev => ({
-                      ...prev,
-                      [key]: e.target.checked
-                    }))}
-                    className="rounded"
-                    style={{ accentColor: theme.colors.primary }}
-                  />
-                  <span className="text-sm" style={{ color: theme.colors.text }}>
-                    {label}
-                  </span>
-                </label>
-              ))}
+    <div className="space-y-2.5">
+      <div className={`rounded-[1.4rem] ${isMobile ? 'p-2.5' : 'p-4'}`} style={inputShellStyle}>
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
+          <div className="relative flex-1">
+            <Search
+              className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2"
+              style={{ color: theme.colors.textSecondary }}
+            />
+            <input
+              type="text"
+              value={searchQuery}
+              autoComplete="off"
+              enterKeyHint="search"
+              spellCheck={false}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onFocus={() => setIsSearchInputFocused(true)}
+              onBlur={() => window.setTimeout(() => setIsSearchInputFocused(false), 120)}
+              onKeyDown={handleSearchInputKeyDown}
+              role="combobox"
+              aria-expanded={shouldShowListbox}
+              aria-controls="searchbar-suggestions"
+              aria-describedby="searchbar-candidate-status"
+              aria-autocomplete="list"
+              aria-activedescendant={activeOptionId ? `search-option-${activeOptionId}` : undefined}
+              placeholder="搜索标题、正文、标签，或直接按条件筛选"
+              className={`w-full rounded-2xl border px-11 text-sm outline-none transition-colors md:text-[15px] ${isMobile ? 'py-2.5' : 'py-3'}`}
+              style={controlStyle}
+            />
+            <div id="searchbar-candidate-status" className="sr-only" aria-live="polite">
+              {candidateAnnouncement}
             </div>
           </div>
 
-          {/* 心情过滤 */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: theme.colors.text }}>
-              心情
-            </label>
-            <select
-              value={searchFilters.mood}
-              onChange={(e) => setSearchFilters(prev => ({ ...prev, mood: e.target.value }))}
-              className="w-full px-3 py-2 rounded border"
+          <div className={`grid gap-2 ${isMobile ? 'grid-cols-2' : 'grid-cols-[auto_auto]'}`}>
+            <button
+              type="button"
+              onClick={() => setShowFilters((value) => !value)}
+              className={`inline-flex items-center justify-center gap-2 rounded-2xl text-sm font-medium transition-transform duration-200 hover:-translate-y-0.5 ${isMobile ? 'px-3 py-2.5' : 'px-4 py-3'}`}
               style={{
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                color: theme.colors.text,
+                ...(showFilters
+                  ? {
+                      background: `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})`,
+                      color: '#ffffff',
+                      border: '1px solid transparent',
+                    }
+                  : controlStyle),
               }}
             >
-              <option value="">所有心情</option>
-              <option value="happy">开心</option>
-              <option value="sad">难过</option>
-              <option value="neutral">平静</option>
-              <option value="excited">兴奋</option>
-              <option value="anxious">焦虑</option>
-              <option value="peaceful">平和</option>
-            </select>
+              <Filter className="h-4 w-4" />
+              筛选
+              {activeFilterCount > 0 ? ` ${activeFilterCount}` : ''}
+            </button>
+
+            {(searchQuery || activeFilterCount > 0) && (
+              <button
+                type="button"
+                onClick={resetSearch}
+                className={`inline-flex items-center justify-center gap-2 rounded-2xl text-sm transition-transform duration-200 hover:-translate-y-0.5 ${isMobile ? 'px-3 py-2.5' : 'px-4 py-3'}`}
+                style={controlStyle}
+              >
+                <X className="h-4 w-4" />
+                清空
+              </button>
+            )}
           </div>
+        </div>
 
-          {/* 天气过滤 */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: theme.colors.text }}>
-              天气
-            </label>
-            <select
-              value={searchFilters.weather}
-              onChange={(e) => setSearchFilters(prev => ({ ...prev, weather: e.target.value }))}
-              className="w-full px-3 py-2 rounded border"
-              style={{
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                color: theme.colors.text,
-              }}
-            >
-              <option value="">所有天气</option>
-              <option value="sunny">晴天</option>
-              <option value="cloudy">多云</option>
-              <option value="rainy">雨天</option>
-              <option value="snowy">雪天</option>
-            </select>
+        {(searchQuery || activeFilterCount > 0) && (
+          <div className="mt-2.5 flex flex-wrap gap-2">
+            {searchQuery && (
+              <SearchStatusPill controlStyle={controlStyle} color={theme.colors.textSecondary}>
+                关键词: {searchQuery}
+              </SearchStatusPill>
+            )}
+            {activeFilterCount > 0 && (
+              <SearchStatusPill controlStyle={controlStyle} color={theme.colors.primary}>
+                已启用 {activeFilterCount} 项筛选
+              </SearchStatusPill>
+            )}
           </div>
+        )}
 
-          {/* 标签和时间过滤 - 只在快速筛选功能启用时显示 */}
-          {quickFiltersSettings.enabled && (
-            <>
-              {/* 标签过滤 */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2" style={{ color: theme.colors.text }}>
-                  <Tag className="w-4 h-4" />
-                  按标签筛选
-                </label>
-                <select
-                  value={searchFilters.selectedTag}
-                  onChange={(e) => setSearchFilters(prev => ({ ...prev, selectedTag: e.target.value }))}
-                  className="w-full px-3 py-2 rounded border"
-                  style={{
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  }}
-                >
-                  <option value="">所有标签</option>
-                  <option value="__no_tags__">📝 无标签 ({getNoTagsCount()})</option>
-                  {getAllTags().map(tag => (
-                    <option key={tag} value={tag}>#{tag}</option>
-                  ))}
-                </select>
+        {(shouldShowRecentSearches || shouldShowSuggestions) && (
+          <div
+            className={`mt-2.5 flex flex-col rounded-2xl ${isMobile ? 'gap-2 p-2.5' : 'gap-3 p-3'}`}
+            style={controlStyle}
+            role="listbox"
+            id="searchbar-suggestions"
+            aria-label="搜索候选项"
+          >
+            {shouldShowRecentSearches && (
+              <>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: theme.colors.textSecondary }}>
+                最近搜索
               </div>
+              <button
+                type="button"
+                onClick={clearRecentSearches}
+                className="text-xs transition-opacity hover:opacity-80"
+                style={{ color: theme.colors.textSecondary }}
+              >
+                清空历史
+              </button>
+            </div>
 
-              {/* 年份过滤 */}
-              <div className="space-y-2">
-                <label className="text-sm font-medium flex items-center gap-2" style={{ color: theme.colors.text }}>
-                  <Calendar className="w-4 h-4" />
-                  按年份筛选
-                </label>
-                <select
-                  value={searchFilters.selectedYear}
-                  onChange={(e) => {
-                    setSearchFilters(prev => ({
-                      ...prev,
-                      selectedYear: e.target.value,
-                      selectedMonth: '' // 清空月份选择
-                    }));
-                  }}
-                  className="w-full px-3 py-2 rounded border"
-                  style={{
-                    backgroundColor: theme.colors.surface,
-                    borderColor: theme.colors.border,
-                    color: theme.colors.text,
-                  }}
+            <div className="flex flex-wrap gap-2">
+              {visibleRecentSearches.map((item) => (
+                <SearchSuggestionChip
+                  key={item}
+                  optionId={`recent-${item}`}
+                  selected={highlightedOptionIndex >= 0 && keyboardOptions[highlightedOptionIndex]?.id === `recent-${item}`}
+                  onClick={() => handleSelectQueryValue(item)}
+                  controlStyle={controlStyle}
+                  inactiveColor={theme.colors.textSecondary}
+                  activeBackground={activeSuggestionBackground}
                 >
-                  <option value="">所有年份</option>
-                  {getAllYears().map(year => (
-                    <option key={year} value={year}>{year}年</option>
-                  ))}
-                </select>
-              </div>
+                  <Search className="h-3.5 w-3.5" />
+                  {item}
+                </SearchSuggestionChip>
+              ))}
+            </div>
+              </>
+            )}
 
-              {/* 月份过滤 */}
-              {searchFilters.selectedYear && (
-                <div className="space-y-2">
-                  <label className="text-sm font-medium" style={{ color: theme.colors.text }}>
-                    按月份筛选
-                  </label>
-                  <select
-                    value={searchFilters.selectedMonth}
-                    onChange={(e) => setSearchFilters(prev => ({ ...prev, selectedMonth: e.target.value }))}
-                    className="w-full px-3 py-2 rounded border"
-                    style={{
-                      backgroundColor: theme.colors.surface,
-                      borderColor: theme.colors.border,
-                      color: theme.colors.text,
-                    }}
-                  >
-                    <option value="">所有月份</option>
-                    {getMonthsForYear(searchFilters.selectedYear).map(month => (
-                      <option key={month} value={month}>
-                        {parseInt(month)}月
-                      </option>
-                    ))}
-                  </select>
+            {shouldShowSuggestions && (
+              <>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs font-medium uppercase tracking-[0.16em]" style={{ color: theme.colors.textSecondary }}>
+                搜索建议
+              </div>
+              <div className="text-xs" style={{ color: theme.colors.textSecondary }}>
+                {suggestionScopeText}
+              </div>
+            </div>
+
+            {suggestionsDisabledByScope && (
+              <div className="text-sm" style={{ color: theme.colors.textSecondary }}>
+                当前已关闭标题和标签搜索范围，建议区暂时隐藏。重新勾选任一范围后会恢复建议。
+              </div>
+            )}
+
+            {searchSuggestions.tags.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium" style={{ color: theme.colors.textSecondary }}>
+                  标签建议
                 </div>
-              )}
-            </>
-          )}
+                <div className="flex flex-wrap gap-2">
+                  {searchSuggestions.tags.map((item) => (
+                    <SearchSuggestionChip
+                      key={`${item.type}-${item.value}`}
+                      optionId={`tag-${item.value}`}
+                      selected={highlightedOptionIndex >= 0 && keyboardOptions[highlightedOptionIndex]?.id === `tag-${item.value}`}
+                      onClick={() => handleSelectQueryValue(item.value)}
+                      controlStyle={controlStyle}
+                      inactiveColor={theme.colors.primary}
+                      activeBackground={activeSuggestionBackground}
+                    >
+                      <Tag className="h-3.5 w-3.5" />
+                      #{item.value}
+                      <span className="opacity-70">{item.matchCount}</span>
+                    </SearchSuggestionChip>
+                  ))}
+                </div>
+              </div>
+            )}
 
-          {/* 日期范围 */}
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: theme.colors.text }}>
-              时间范围
-            </label>
-            <select
+            {searchSuggestions.titles.length > 0 && (
+              <div className="space-y-2">
+                <div className="text-xs font-medium" style={{ color: theme.colors.textSecondary }}>
+                  标题建议
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {searchSuggestions.titles.map((item) => (
+                    <SearchSuggestionChip
+                      key={`${item.type}-${item.value}`}
+                      optionId={`title-${item.value}`}
+                      selected={highlightedOptionIndex >= 0 && keyboardOptions[highlightedOptionIndex]?.id === `title-${item.value}`}
+                      onClick={() => handleSelectQueryValue(item.value)}
+                      controlStyle={controlStyle}
+                      inactiveColor={theme.colors.textSecondary}
+                      activeBackground={activeSuggestionBackground}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                      {item.value}
+                      <span className="opacity-70">{item.matchCount}</span>
+                    </SearchSuggestionChip>
+                  ))}
+                </div>
+              </div>
+            )}
+              </>
+            )}
+          </div>
+        )}
+      </div>
+
+      {showFilters && (
+        <div className={`rounded-[1.4rem] ${isMobile ? 'p-3' : 'p-5'}`} style={inputShellStyle}>
+          <div className={`flex items-center justify-between gap-3 ${isMobile ? 'mb-3' : 'mb-4'}`}>
+            <div>
+              <div className="text-sm font-semibold" style={{ color: theme.colors.text }}>
+                检索条件
+              </div>
+              <div className="mt-1 text-xs md:text-sm" style={{ color: theme.colors.textSecondary }}>
+                {isMobile ? '把文字、时间和状态条件收进一个面板。' : '把文字搜索和标签、时间、状态过滤放在一个面板里。'}
+              </div>
+            </div>
+          </div>
+
+          <div className={`grid ${isMobile ? 'gap-3' : 'gap-4 md:grid-cols-2 xl:grid-cols-3'}`}>
+            <SearchFilterCard controlStyle={controlStyle} title="搜索范围" isMobile={isMobile}>
+              <div className="flex flex-wrap gap-3 text-sm" style={{ color: theme.colors.textSecondary }}>
+                {SEARCH_SCOPE_OPTIONS.map(({ key, label }) => (
+                  <label key={key} className="inline-flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      checked={searchFilters[key]}
+                      onChange={(e) =>
+                        setSearchFilters((prev) => ({
+                          ...prev,
+                          [key]: e.target.checked,
+                        }))
+                      }
+                      style={{ accentColor: theme.colors.primary }}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </SearchFilterCard>
+
+            <SearchFilterSelect
+              controlStyle={controlStyle}
+              title="心情"
+              isMobile={isMobile}
+              value={searchFilters.mood}
+              options={moodOptions}
+              onChange={(value) => setSearchFilters((prev) => ({ ...prev, mood: value }))}
+            />
+
+            <SearchFilterSelect
+              controlStyle={controlStyle}
+              title="天气"
+              isMobile={isMobile}
+              value={searchFilters.weather}
+              options={weatherOptions}
+              onChange={(value) => setSearchFilters((prev) => ({ ...prev, weather: value }))}
+            />
+
+            <SearchFilterSelect
+              controlStyle={controlStyle}
+              title="时间范围"
+              isMobile={isMobile}
               value={searchFilters.dateRange}
-              onChange={(e) => setSearchFilters(prev => ({ ...prev, dateRange: e.target.value }))}
-              className="w-full px-3 py-2 rounded border"
-              style={{
-                backgroundColor: theme.colors.surface,
-                borderColor: theme.colors.border,
-                color: theme.colors.text,
-              }}
-            >
-              <option value="">所有时间</option>
-              <option value="today">今天</option>
-              <option value="week">最近一周</option>
-              <option value="month">最近一个月</option>
-            </select>
+              options={dateRangeOptions}
+              onChange={(value) => setSearchFilters((prev) => ({ ...prev, dateRange: value }))}
+            />
+
+            {shouldShowExtendedFilters && (
+              <>
+                <SearchFilterSelect
+                  controlStyle={controlStyle}
+                  title="标签"
+                  icon={<Tag className="h-4 w-4" />}
+                  isMobile={isMobile}
+                  value={searchFilters.selectedTag}
+                  options={[
+                    { value: '', label: '所有标签' },
+                    { value: '__no_tags__', label: `无标签 (${untaggedEntryCount})` },
+                    ...availableTags.map((tag) => ({ value: tag, label: `#${tag}` })),
+                  ]}
+                  onChange={(value) => setSearchFilters((prev) => ({ ...prev, selectedTag: value }))}
+                />
+
+                <SearchFilterSelect
+                  controlStyle={controlStyle}
+                  title="年份"
+                  icon={<Calendar className="h-4 w-4" />}
+                  isMobile={isMobile}
+                  value={searchFilters.selectedYear}
+                  options={[
+                    { value: '', label: '所有年份' },
+                    ...availableYears.map((year) => ({ value: year, label: `${year}年` })),
+                  ]}
+                  onChange={(value) =>
+                    setSearchFilters((prev) => ({
+                      ...prev,
+                      selectedYear: value,
+                      selectedMonth: '',
+                    }))
+                  }
+                />
+
+                {searchFilters.selectedYear && (
+                  <SearchFilterSelect
+                    controlStyle={controlStyle}
+                    title="月份"
+                    icon={<Calendar className="h-4 w-4" />}
+                    isMobile={isMobile}
+                    value={searchFilters.selectedMonth}
+                    options={[
+                      { value: '', label: '所有月份' },
+                      ...availableMonthsForYear.map((month) => ({ value: month, label: `${parseInt(month, 10)}月` })),
+                    ]}
+                    onChange={(value) => setSearchFilters((prev) => ({ ...prev, selectedMonth: value }))}
+                  />
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

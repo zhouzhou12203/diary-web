@@ -1,72 +1,75 @@
-
-import { LayoutGrid, List, Archive } from 'lucide-react';
+import type { CSSProperties } from 'react';
 import { useThemeContext } from './ThemeProvider';
-import { useArchiveViewSettings } from '../hooks/useArchiveViewSettings';
 
 export type ViewMode = 'card' | 'timeline' | 'archive';
+
+const VIEW_MODE_OPTIONS: Array<{
+  mode: ViewMode;
+  label: string;
+  compactLabel: string;
+  title: string;
+}> = [
+  { mode: 'card', label: '卡片', compactLabel: '卡片', title: '卡片模式' },
+  { mode: 'timeline', label: '时间轴', compactLabel: '时间', title: '时间轴模式' },
+  { mode: 'archive', label: '归纳', compactLabel: '归纳', title: '归纳模式' },
+];
 
 interface ViewModeToggleProps {
   viewMode: ViewMode;
   onViewModeChange: (mode: ViewMode) => void;
+  archiveViewEnabled?: boolean;
+  compact?: boolean;
 }
 
-export function ViewModeToggle({ viewMode, onViewModeChange }: ViewModeToggleProps) {
+export function ViewModeToggle({
+  viewMode,
+  onViewModeChange,
+  archiveViewEnabled = true,
+  compact = false,
+}: ViewModeToggleProps) {
   const { theme } = useThemeContext();
-  const { settings: archiveViewSettings, loading: archiveViewLoading } = useArchiveViewSettings();
+  const options = archiveViewEnabled
+    ? VIEW_MODE_OPTIONS
+    : VIEW_MODE_OPTIONS.filter((option) => option.mode !== 'archive');
+  const wrapperStyle: CSSProperties = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.08)' : 'rgba(255, 255, 255, 0.48)',
+    border: `1px solid ${theme.colors.border}`,
+  };
+
+  const getButtonStyle = (active: boolean): CSSProperties => ({
+    background: active ? `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})` : 'transparent',
+    color: active ? 'white' : theme.colors.textSecondary,
+    boxShadow: active ? '0 10px 24px rgba(37, 99, 235, 0.16)' : 'none',
+  });
 
   return (
-    <div className="flex items-center gap-1 p-1 rounded-lg" 
-         style={{ backgroundColor: theme.colors.surface, border: `1px solid ${theme.colors.border}` }}>
-      
-      {/* 卡片模式 */}
-      <button
-        onClick={() => onViewModeChange('card')}
-        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'card' ? 'shadow-sm' : ''
-        }`}
-        style={{
-          backgroundColor: viewMode === 'card' ? theme.colors.primary : 'transparent',
-          color: viewMode === 'card' ? 'white' : theme.colors.textSecondary,
-        }}
-        title="卡片模式"
-      >
-        <LayoutGrid className="w-4 h-4" />
-        <span className="hidden sm:inline">卡片</span>
-      </button>
+    <div
+      className={`flex items-center gap-1 rounded-2xl ${compact ? 'p-1' : 'p-1.5'}`}
+      style={wrapperStyle}
+      role="tablist"
+      aria-label="日记视图切换"
+    >
+      {options.map((option) => {
+        const active = viewMode === option.mode;
 
-      {/* 时间轴模式 */}
-      <button
-        onClick={() => onViewModeChange('timeline')}
-        className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'timeline' ? 'shadow-sm' : ''
-        }`}
-        style={{
-          backgroundColor: viewMode === 'timeline' ? theme.colors.primary : 'transparent',
-          color: viewMode === 'timeline' ? 'white' : theme.colors.textSecondary,
-        }}
-        title="时间轴模式"
-      >
-        <List className="w-4 h-4" />
-        <span className="hidden sm:inline">时间轴</span>
-      </button>
-
-      {/* 归纳模式 - 只在设置启用时显示 */}
-      {!archiveViewLoading && archiveViewSettings.enabled && (
-        <button
-          onClick={() => onViewModeChange('archive')}
-          className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-all duration-200 ${
-            viewMode === 'archive' ? 'shadow-sm' : ''
-          }`}
-          style={{
-            backgroundColor: viewMode === 'archive' ? theme.colors.primary : 'transparent',
-            color: viewMode === 'archive' ? 'white' : theme.colors.textSecondary,
-          }}
-          title="归纳模式"
-        >
-          <Archive className="w-4 h-4" />
-          <span className="hidden sm:inline">归纳</span>
-        </button>
-      )}
+        return (
+          <button
+            key={option.mode}
+            type="button"
+            onClick={() => onViewModeChange(option.mode)}
+            role="tab"
+            aria-selected={active}
+            aria-label={`切换到${option.title.replace('模式', '视图')}`}
+            className={`rounded-xl font-medium transition-all duration-200 ${compact ? 'min-w-[4.25rem] px-2.5 py-1.5 text-xs' : 'px-3 py-2 text-sm'} ${
+              active ? 'shadow-sm' : ''
+            }`}
+            style={getButtonStyle(active)}
+            title={option.title}
+          >
+            <span>{compact ? option.compactLabel : option.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

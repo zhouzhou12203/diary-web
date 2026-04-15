@@ -1,20 +1,22 @@
+import { debugLog, debugWarn } from './logger.ts';
+
 /**
  * 坐标系转换工具
  * 解决GPS定位偏差问题
  */
 
 // 坐标系类型
-export type CoordinateSystem = 'WGS84' | 'GCJ02' | 'BD09';
+type CoordinateSystem = 'WGS84' | 'GCJ02' | 'BD09';
 
 // 坐标点接口
-export interface Coordinate {
+interface Coordinate {
   latitude: number;
   longitude: number;
   system?: CoordinateSystem;
 }
 
 // 转换结果接口
-export interface ConversionResult extends Coordinate {
+interface ConversionResult extends Coordinate {
   originalSystem: CoordinateSystem;
   targetSystem: CoordinateSystem;
   offset?: {
@@ -28,7 +30,7 @@ export interface ConversionResult extends Coordinate {
  * 判断坐标是否在中国境内
  * 在中国境内需要进行坐标系转换
  */
-export function isInChina(lat: number, lng: number): boolean {
+function isInChina(lat: number, lng: number): boolean {
   return lat >= 18 && lat <= 54 && lng >= 73 && lng <= 135;
 }
 
@@ -49,7 +51,7 @@ export function wgs84ToGcj02(lat: number, lng: number): ConversionResult {
   }
 
   const a = 6378245.0;
-  const ee = 0.00669342162296594323;
+  const ee = 6.693421622965943e-3;
   
   const dLat = transformLat(lng - 105.0, lat - 35.0);
   const dLng = transformLng(lng - 105.0, lat - 35.0);
@@ -84,7 +86,7 @@ export function wgs84ToGcj02(lat: number, lng: number): ConversionResult {
  * GCJ02转WGS84 (火星坐标转GPS坐标)
  * 用于将高德地图坐标转换为GPS坐标
  */
-export function gcj02ToWgs84(lat: number, lng: number): ConversionResult {
+function gcj02ToWgs84(lat: number, lng: number): ConversionResult {
   if (!isInChina(lat, lng)) {
     return {
       latitude: lat,
@@ -96,7 +98,7 @@ export function gcj02ToWgs84(lat: number, lng: number): ConversionResult {
   }
 
   const a = 6378245.0;
-  const ee = 0.00669342162296594323;
+  const ee = 6.693421622965943e-3;
   
   const dLat = transformLat(lng - 105.0, lat - 35.0);
   const dLng = transformLng(lng - 105.0, lat - 35.0);
@@ -130,7 +132,7 @@ export function gcj02ToWgs84(lat: number, lng: number): ConversionResult {
 /**
  * GCJ02转BD09 (火星坐标转百度坐标)
  */
-export function gcj02ToBd09(lat: number, lng: number): ConversionResult {
+function gcj02ToBd09(lat: number, lng: number): ConversionResult {
   const z = Math.sqrt(lng * lng + lat * lat) + 0.00002 * Math.sin(lat * Math.PI * 3000.0 / 180.0);
   const theta = Math.atan2(lat, lng) + 0.000003 * Math.cos(lng * Math.PI * 3000.0 / 180.0);
   
@@ -156,7 +158,7 @@ export function gcj02ToBd09(lat: number, lng: number): ConversionResult {
 /**
  * BD09转GCJ02 (百度坐标转火星坐标)
  */
-export function bd09ToGcj02(lat: number, lng: number): ConversionResult {
+function bd09ToGcj02(lat: number, lng: number): ConversionResult {
   const x = lng - 0.0065;
   const y = lat - 0.006;
   const z = Math.sqrt(x * x + y * y) - 0.00002 * Math.sin(y * Math.PI * 3000.0 / 180.0);
@@ -185,7 +187,7 @@ export function bd09ToGcj02(lat: number, lng: number): ConversionResult {
  * 自动转换坐标系
  * 根据目标系统自动选择转换方法
  */
-export function convertCoordinate(
+function convertCoordinate(
   lat: number, 
   lng: number, 
   from: CoordinateSystem, 
@@ -211,12 +213,14 @@ export function convertCoordinate(
       return gcj02ToBd09(lat, lng);
     case 'BD09->GCJ02':
       return bd09ToGcj02(lat, lng);
-    case 'WGS84->BD09':
+    case 'WGS84->BD09': {
       const gcj02Result = wgs84ToGcj02(lat, lng);
       return gcj02ToBd09(gcj02Result.latitude, gcj02Result.longitude);
-    case 'BD09->WGS84':
+    }
+    case 'BD09->WGS84': {
       const gcj02Result2 = bd09ToGcj02(lat, lng);
       return gcj02ToWgs84(gcj02Result2.latitude, gcj02Result2.longitude);
+    }
     default:
       throw new Error(`不支持的坐标系转换: ${from} -> ${to}`);
   }
@@ -248,7 +252,7 @@ function transformLng(lng: number, lat: number): number {
  * 计算两点间距离（米）
  * 使用Haversine公式
  */
-export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
+function calculateDistance(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371000; // 地球半径（米）
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLng = (lng2 - lng1) * Math.PI / 180;
@@ -260,48 +264,9 @@ export function calculateDistance(lat1: number, lng1: number, lat2: number, lng2
 }
 
 /**
- * 获取GPS位置并自动转换为指定坐标系
- */
-export function getLocationWithConversion(
-  targetSystem: CoordinateSystem = 'GCJ02',
-  options?: PositionOptions
-): Promise<ConversionResult> {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation) {
-      reject(new Error('浏览器不支持地理定位'));
-      return;
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude } = position.coords;
-        
-        // GPS返回的是WGS84坐标，转换为目标坐标系
-        const result = convertCoordinate(latitude, longitude, 'WGS84', targetSystem);
-        
-        // 添加GPS精度信息
-        (result as any).accuracy = position.coords.accuracy;
-        (result as any).timestamp = position.timestamp;
-        
-        resolve(result);
-      },
-      reject,
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 0,
-        ...options
-      }
-    );
-  });
-}
-
-
-
-/**
  * 高精度定位接口
  */
-export interface HighAccuracyLocationResult extends ConversionResult {
+interface HighAccuracyLocationResult extends ConversionResult {
   accuracy?: number;
   timestamp: number;
   attempts: number;
@@ -328,7 +293,7 @@ export async function getHighAccuracyLocation(
     targetSystem = 'GCJ02'
   } = options;
 
-  console.log('🎯 开始高精度定位，目标精度:', acceptableAccuracy, '米');
+  debugLog('🎯 开始高精度定位，目标精度:', acceptableAccuracy, '米');
 
   const attempts: Array<{
     latitude: number;
@@ -340,7 +305,7 @@ export async function getHighAccuracyLocation(
   // 多次尝试GPS定位
   for (let i = 0; i < maxAttempts; i++) {
     try {
-      console.log(`📡 第${i + 1}/${maxAttempts}次GPS定位尝试...`);
+      debugLog(`📡 第${i + 1}/${maxAttempts}次GPS定位尝试...`);
 
       const position = await new Promise<GeolocationPosition>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(resolve, reject, {
@@ -360,14 +325,14 @@ export async function getHighAccuracyLocation(
 
       attempts.push(attempt);
 
-      console.log(`📍 第${i + 1}次定位结果:`, {
+      debugLog(`📍 第${i + 1}次定位结果:`, {
         coordinates: `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`,
         accuracy: `${accuracy?.toFixed(1)}米`
       });
 
       // 如果精度已经足够好，可以提前结束
       if (accuracy && accuracy <= acceptableAccuracy) {
-        console.log('✅ 达到目标精度，提前结束定位');
+        debugLog('✅ 达到目标精度，提前结束定位');
         break;
       }
 
@@ -377,7 +342,7 @@ export async function getHighAccuracyLocation(
       }
 
     } catch (error) {
-      console.warn(`❌ 第${i + 1}次定位失败:`, error);
+      debugWarn(`❌ 第${i + 1}次定位失败:`, error);
     }
   }
 
@@ -387,7 +352,7 @@ export async function getHighAccuracyLocation(
 
   // 选择最佳定位结果
   const bestAttempt = selectBestLocation(attempts);
-  console.log('🏆 选择最佳定位结果:', bestAttempt);
+  debugLog('🏆 选择最佳定位结果:', bestAttempt);
 
   // 转换坐标系
   const converted = convertCoordinate(
@@ -409,7 +374,7 @@ export async function getHighAccuracyLocation(
     confidence
   };
 
-  console.log('🎯 高精度定位完成:', {
+  debugLog('🎯 高精度定位完成:', {
     finalCoordinates: `${result.latitude.toFixed(6)}, ${result.longitude.toFixed(6)}`,
     accuracy: result.accuracy ? `${result.accuracy.toFixed(1)}米` : '未知',
     confidence: result.confidence,
@@ -459,54 +424,4 @@ function evaluateLocationConfidence(accuracy: number, attempts: number): 'high' 
   } else {
     return 'low';
   }
-}
-
-/**
- * 计算多个位置的平均坐标（加权平均）
- */
-export function calculateWeightedAverage(locations: Array<{
-  latitude: number;
-  longitude: number;
-  accuracy: number;
-  weight?: number;
-}>): { latitude: number; longitude: number; averageAccuracy: number } {
-  if (locations.length === 0) {
-    throw new Error('位置数组不能为空');
-  }
-
-  if (locations.length === 1) {
-    return {
-      latitude: locations[0].latitude,
-      longitude: locations[0].longitude,
-      averageAccuracy: locations[0].accuracy
-    };
-  }
-
-  // 计算权重（精度越高权重越大）
-  const weightsAndCoords = locations.map(loc => {
-    // 权重 = 1 / (精度 + 1)，避免除零
-    const weight = loc.weight || (1 / (loc.accuracy + 1));
-    return {
-      ...loc,
-      weight
-    };
-  });
-
-  const totalWeight = weightsAndCoords.reduce((sum, item) => sum + item.weight, 0);
-
-  // 加权平均
-  const weightedLat = weightsAndCoords.reduce((sum, item) =>
-    sum + (item.latitude * item.weight), 0) / totalWeight;
-
-  const weightedLng = weightsAndCoords.reduce((sum, item) =>
-    sum + (item.longitude * item.weight), 0) / totalWeight;
-
-  const averageAccuracy = weightsAndCoords.reduce((sum, item) =>
-    sum + item.accuracy, 0) / weightsAndCoords.length;
-
-  return {
-    latitude: weightedLat,
-    longitude: weightedLng,
-    averageAccuracy
-  };
 }

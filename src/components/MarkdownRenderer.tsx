@@ -1,4 +1,6 @@
-import React from 'react';
+import type { CSSProperties, HTMLAttributes } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { useThemeContext } from './ThemeProvider';
 
 interface MarkdownRendererProps {
@@ -6,190 +8,175 @@ interface MarkdownRendererProps {
   className?: string;
 }
 
-// 简单的Markdown解析函数
-function parseMarkdown(content: string): string {
-  try {
-    if (!content || typeof content !== 'string') {
-      return '';
-    }
-
-    return content
-      // 标题
-      .replace(/^### (.*$)/gim, '<h3>$1</h3>')
-      .replace(/^## (.*$)/gim, '<h2>$1</h2>')
-      .replace(/^# (.*$)/gim, '<h1>$1</h1>')
-      // 粗体和斜体
-      .replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>')
-      .replace(/\*(.*?)\*/gim, '<em>$1</em>')
-      // 行内代码
-      .replace(/`(.*?)`/gim, '<code>$1</code>')
-      // 链接
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/gim, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-      // 图片
-      .replace(/!\[([^\]]*)\]\(([^)]+)\)/gim, '<img src="$2" alt="$1" />')
-      // 列表项
-      .replace(/^\- (.*$)/gim, '<li>$1</li>')
-      // 引用
-      .replace(/^> (.*$)/gim, '<blockquote>$1</blockquote>')
-      // 分割线
-      .replace(/^---$/gim, '<hr>')
-      // 换行
-      .replace(/\n/gim, '<br>');
-  } catch (error) {
-    console.error('Markdown解析失败:', error);
-    return content; // 返回原始内容
-  }
-}
-
 export function MarkdownRenderer({ content, className = '' }: MarkdownRendererProps) {
   const { theme } = useThemeContext();
 
-  try {
-    // 安全检查
-    if (!content || typeof content !== 'string') {
-      return (
-        <div
-          className={`prose prose-sm max-w-none ${className}`}
-          style={{ color: theme.colors.text }}
-        >
-          <p className="mb-2 leading-relaxed text-gray-400">
-            暂无内容
-          </p>
-        </div>
-      );
-    }
-
-    // 如果内容包含Markdown语法，则解析；否则直接显示
-    const hasMarkdown = /[#*`\[\]>-]/.test(content);
-
-    if (!hasMarkdown) {
-      // 纯文本内容，保持换行
-      return (
-        <div
-          className={`prose prose-sm max-w-none ${className}`}
-          style={{ color: theme.colors.text }}
-        >
-          {content.split('\n').map((line, index) => (
-            <p key={index} className="mb-2 leading-relaxed">
-              {line || '\u00A0'}
-            </p>
-          ))}
-        </div>
-      );
-    }
-
-    const parsedContent = parseMarkdown(content);
-
-  return (
-    <div
-      className={`prose prose-sm max-w-none ${className}`}
-      style={{
-        color: theme.colors.text,
-        textShadow: theme.mode === 'glass' ? '0 1px 2px rgba(0, 0, 0, 0.2)' : 'none',
-        '--theme-primary': theme.colors.primary,
-        '--theme-surface': theme.colors.surface,
-        '--theme-border': theme.colors.border,
-        '--theme-text-secondary': theme.colors.textSecondary,
-      } as React.CSSProperties}
-    >
-      <style>
-        {`
-          .prose h1 {
-            color: ${theme.colors.text};
-            font-size: 1.5rem;
-            font-weight: bold;
-            margin-bottom: 1rem;
-            padding-bottom: 0.5rem;
-            border-bottom: 1px solid ${theme.colors.border};
-          }
-          .prose h2 {
-            color: ${theme.colors.text};
-            font-size: 1.25rem;
-            font-weight: 600;
-            margin-bottom: 0.75rem;
-            padding-bottom: 0.25rem;
-            border-bottom: 1px solid ${theme.colors.border};
-          }
-          .prose h3 {
-            color: ${theme.colors.text};
-            font-size: 1.125rem;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-          }
-          .prose strong {
-            color: ${theme.colors.text};
-            font-weight: bold;
-          }
-          .prose em {
-            color: ${theme.colors.textSecondary};
-            font-style: italic;
-          }
-          .prose code {
-            background-color: ${theme.colors.surface};
-            color: ${theme.colors.primary};
-            padding: 0.125rem 0.375rem;
-            border-radius: 0.25rem;
-            font-size: 0.875rem;
-            border: 1px solid ${theme.colors.border};
-          }
-          .prose a {
-            color: ${theme.colors.primary};
-            text-decoration: underline;
-          }
-          .prose a:hover {
-            text-decoration: none;
-          }
-          .prose blockquote {
-            border-left: 4px solid ${theme.colors.primary};
-            padding-left: 1rem;
-            margin: 1rem 0;
-            font-style: italic;
-            background-color: ${theme.colors.primary}15;
-            color: ${theme.colors.textSecondary};
-            padding: 0.5rem 1rem;
-            border-radius: 0 0.5rem 0.5rem 0;
-          }
-          .prose ul {
-            list-style-type: disc;
-            margin-left: 1.5rem;
-            margin-bottom: 1rem;
-          }
-          .prose li {
-            margin-bottom: 0.25rem;
-          }
-          .prose hr {
-            border: none;
-            height: 1px;
-            background-color: ${theme.colors.border};
-            margin: 1.5rem 0;
-          }
-          .prose img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 0.5rem;
-            margin: 1rem 0;
-            border: 1px solid ${theme.colors.border};
-          }
-        `}
-      </style>
-      <div dangerouslySetInnerHTML={{ __html: parsedContent }} />
-    </div>
-  );
-  } catch (error) {
-    console.error('MarkdownRenderer渲染失败:', error);
-    // 降级到纯文本显示
+  if (!content || typeof content !== 'string' || !content.trim()) {
     return (
-      <div
-        className={`prose prose-sm max-w-none ${className}`}
-        style={{ color: theme.colors.text }}
-      >
-        <div className="p-2 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800 mb-2">
-          ⚠️ Markdown渲染失败，显示原始内容
-        </div>
-        <pre className="whitespace-pre-wrap font-sans">
-          {content}
-        </pre>
+      <div className={`markdown-prose ${className}`} style={{ color: theme.colors.textSecondary }}>
+        暂无内容
       </div>
     );
   }
+
+  const proseStyle: CSSProperties = {
+    color: theme.colors.text,
+    lineHeight: 1.92,
+    fontSize: '1rem',
+    letterSpacing: '0.01em',
+  };
+
+  const mutedBlockStyle: CSSProperties = {
+    backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.12)' : theme.colors.surface,
+    border: `1px solid ${theme.colors.border}`,
+    borderRadius: '18px',
+  };
+
+  return (
+    <div className={`markdown-prose ${className}`} style={proseStyle}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: ({ ...props }) => (
+            <h1
+              style={{
+                color: theme.colors.text,
+                fontSize: '1.7rem',
+                fontWeight: 600,
+                lineHeight: 1.15,
+                letterSpacing: '-0.03em',
+                margin: '0 0 1.2rem',
+                paddingBottom: '0.7rem',
+                borderBottom: `1px solid ${theme.colors.border}`,
+              }}
+              {...props}
+            />
+          ),
+          h2: ({ ...props }) => (
+            <h2
+              style={{
+                color: theme.colors.text,
+                fontSize: '1.4rem',
+                fontWeight: 600,
+                lineHeight: 1.2,
+                letterSpacing: '-0.025em',
+                margin: '1.75rem 0 0.95rem',
+              }}
+              {...props}
+            />
+          ),
+          h3: ({ ...props }) => (
+            <h3
+              style={{
+                color: theme.colors.text,
+                fontSize: '1.18rem',
+                fontWeight: 600,
+                lineHeight: 1.3,
+                letterSpacing: '-0.02em',
+                margin: '1.45rem 0 0.7rem',
+              }}
+              {...props}
+            />
+          ),
+          p: ({ ...props }) => (
+            <p style={{ margin: '0 0 1.05rem', color: theme.colors.text }} {...props} />
+          ),
+          ul: ({ ...props }) => (
+            <ul style={{ margin: '0 0 1.15rem', paddingLeft: '1.35rem' }} {...props} />
+          ),
+          ol: ({ ...props }) => (
+            <ol style={{ margin: '0 0 1.15rem', paddingLeft: '1.35rem' }} {...props} />
+          ),
+          li: ({ ...props }) => (
+            <li style={{ marginBottom: '0.45rem', paddingLeft: '0.1rem' }} {...props} />
+          ),
+          blockquote: ({ ...props }) => (
+            <blockquote
+              style={{
+                margin: '1.35rem 0',
+                padding: '1rem 1.1rem',
+                borderLeft: `3px solid ${theme.colors.primary}`,
+                color: theme.colors.textSecondary,
+                ...mutedBlockStyle,
+              }}
+              {...props}
+            />
+          ),
+          a: ({ ...props }) => (
+            <a
+              style={{
+                color: theme.colors.primary,
+                textDecoration: 'underline',
+                textUnderlineOffset: '0.18em',
+              }}
+              target="_blank"
+              rel="noreferrer"
+              {...props}
+            />
+          ),
+          img: ({ ...props }) => (
+            <img
+              loading="lazy"
+              decoding="async"
+              style={{
+                width: '100%',
+                borderRadius: '18px',
+                margin: '1.15rem 0',
+                border: `1px solid ${theme.colors.border}`,
+              }}
+              {...props}
+            />
+          ),
+          code: ({ inline, className: codeClassName, children, ...props }: HTMLAttributes<HTMLElement> & { inline?: boolean }) => {
+            if (inline) {
+              return (
+                <code
+                  className={codeClassName}
+                  style={{
+                    fontSize: '0.9em',
+                    padding: '0.18rem 0.42rem',
+                    borderRadius: '8px',
+                    backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.16)' : `${theme.colors.primary}14`,
+                    color: theme.colors.primary,
+                  }}
+                  {...props}
+                >
+                  {children}
+                </code>
+              );
+            }
+
+            return (
+              <code className={codeClassName} {...props}>
+                {children}
+              </code>
+            );
+          },
+          pre: ({ ...props }) => (
+            <pre
+              style={{
+                overflowX: 'auto',
+                margin: '1.2rem 0',
+                padding: '1.05rem 1.15rem',
+                ...mutedBlockStyle,
+              }}
+              {...props}
+            />
+          ),
+          hr: ({ ...props }) => (
+            <hr
+              style={{
+                margin: '1.8rem 0',
+                border: 0,
+                borderTop: `1px solid ${theme.colors.border}`,
+              }}
+              {...props}
+            />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
 }

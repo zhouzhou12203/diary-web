@@ -21,6 +21,39 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: 'dist',
       sourcemap: false,
+      modulePreload: {
+        resolveDependencies: (_url, deps) => deps.filter((dep) => !dep.includes('markdown-vendor') && !dep.includes('LazyMarkdownRenderer')),
+      },
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (!id.includes('node_modules')) {
+              return undefined;
+            }
+
+            if (id.includes('react') || id.includes('scheduler')) {
+              return 'react-vendor';
+            }
+
+            if (
+              id.includes('react-markdown') ||
+              id.includes('remark-gfm') ||
+              id.includes('mdast') ||
+              id.includes('micromark') ||
+              id.includes('unist') ||
+              id.includes('hast')
+            ) {
+              return 'markdown-vendor';
+            }
+
+            if (id.includes('lucide-react')) {
+              return 'icons-vendor';
+            }
+
+            return 'vendor';
+          },
+        },
+      },
     },
   };
 })

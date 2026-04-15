@@ -1,6 +1,10 @@
 import React, { useState, useRef, useCallback } from 'react';
 import { Upload, X, Loader2 } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
+import { NotificationToast } from './NotificationToast';
+import { apiService } from '../services/api';
+import { useNotificationState } from '../hooks/useNotificationState';
+import { debugError } from '../utils/logger.ts';
 
 interface ImageUploadProps {
   images: string[];
@@ -11,37 +15,24 @@ interface ImageUploadProps {
 export function ImageUpload({ images, onImagesChange, maxImages = 5 }: ImageUploadProps) {
   const { theme } = useThemeContext();
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const { hideNotification, notification, showNotification } = useNotificationState();
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const uploadImage = async (file: File): Promise<string> => {
-    // 模拟上传到 Cloudflare Images
-    // 在实际应用中，这里应该调用真实的上传 API
-    return new Promise((resolve) => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        // 模拟网络延迟
-        setTimeout(() => {
-          resolve(reader.result as string);
-        }, 1000);
-      };
-      reader.readAsDataURL(file);
-    });
-  };
 
   const handleFileSelect = useCallback(async (files: FileList) => {
     if (images.length >= maxImages) {
-      alert(`最多只能上传 ${maxImages} 张图片`);
+      showNotification(`最多只能上传 ${maxImages} 张图片`, 'error');
       return;
     }
 
     const validFiles = Array.from(files).filter(file => {
       if (!file.type.startsWith('image/')) {
-        alert(`${file.name} 不是有效的图片文件`);
+        showNotification(`${file.name} 不是有效的图片文件`, 'error');
         return false;
       }
       if (file.size > 5 * 1024 * 1024) {
-        alert(`${file.name} 文件大小超过 5MB`);
+        showNotification(`${file.name} 文件大小超过 5MB`, 'error');
         return false;
       }
       return true;
@@ -53,15 +44,25 @@ export function ImageUpload({ images, onImagesChange, maxImages = 5 }: ImageUplo
     const filesToUpload = validFiles.slice(0, remainingSlots);
 
     setUploading(true);
+    setUploadProgress({ current: 0, total: filesToUpload.length });
     try {
-      const uploadPromises = filesToUpload.map(uploadImage);
-      const uploadedUrls = await Promise.all(uploadPromises);
+      const uploadedUrls: string[] = [];
+
+      for (let index = 0; index < filesToUpload.length; index += 1) {
+        const file = filesToUpload[index];
+        setUploadProgress({ current: index + 1, total: filesToUpload.length });
+        const uploadedUrl = await apiService.uploadImage(file);
+        uploadedUrls.push(uploadedUrl);
+      }
+
       onImagesChange([...images, ...uploadedUrls]);
+      showNotification(`成功上传 ${uploadedUrls.length} 张图片`, 'success');
     } catch (error) {
-      console.error('上传失败:', error);
-      alert('图片上传失败，请重试');
+      debugError('上传失败:', error);
+      showNotification(error instanceof Error ? error.message : '图片上传失败，请重试', 'error');
     } finally {
       setUploading(false);
+      setUploadProgress(null);
     }
   }, [images, maxImages, onImagesChange]);
 
@@ -118,7 +119,9 @@ export function ImageUpload({ images, onImagesChange, maxImages = 5 }: ImageUplo
         {uploading ? (
           <div className="flex flex-col items-center">
             <Loader2 className="w-8 h-8 animate-spin mb-2" style={{ color: theme.colors.primary }} />
-            <p style={{ color: theme.colors.text }}>上传中...</p>
+            <p style={{ color: theme.colors.text }}>
+              {uploadProgress ? `上传中... ${uploadProgress.current}/${uploadProgress.total}` : '上传中...'}
+            </p>
           </div>
         ) : (
           <div className="flex flex-col items-center">
@@ -149,6 +152,8 @@ export function ImageUpload({ images, onImagesChange, maxImages = 5 }: ImageUplo
                   src={imageUrl}
                   alt={`上传的图片 ${index + 1}`}
                   className="w-full h-full object-cover"
+                  loading="lazy"
+                  decoding="async"
                 />
               </div>
               <button
@@ -163,6 +168,14 @@ export function ImageUpload({ images, onImagesChange, maxImages = 5 }: ImageUplo
             </div>
           ))}
         </div>
+      )}
+
+      {notification.visible && (
+        <NotificationToast
+          message={notification.message}
+          type={notification.type}
+          onClose={hideNotification}
+        />
       )}
     </div>
   );

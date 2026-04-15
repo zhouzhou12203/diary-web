@@ -8,11 +8,17 @@ binding = "DB"
 database_name = "diary-db"
 database_id = "d06caa21-556e-477f-bf86-959dd894e047"
 
-# KV namespace for session storage (optional)
-[[kv_namespaces]]
-binding = "SESSIONS"
-id = "df5ca1583e2645328dda4d28cab3fcca"
-preview_id = "your-preview-kv-namespace-id-here"
-
 [vars]
 ENVIRONMENT = "production"
+APP_TIMEZONE = "Asia/Shanghai"
+IMAGES_VARIANT = "public"
+# Optional:
+# IMAGES_ACCOUNT_ID = "your-cloudflare-account-id"
+# IMAGES_DELIVERY_URL = "https://imagedelivery.net/your_hash"
+
+# Production secrets should be configured with:
+# wrangler secret put SESSION_SECRET
+# wrangler secret put ADMIN_BOOTSTRAP_PASSWORD
+# wrangler secret put APP_BOOTSTRAP_PASSWORD
+# wrangler secret put STATS_API_KEY
+# wrangler secret put IMAGES_API_TOKEN

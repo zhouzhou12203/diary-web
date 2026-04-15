@@ -1,271 +1,386 @@
-import { Tag, MapPin } from 'lucide-react';
-import { DiaryEntry } from '../types';
-import { useThemeContext } from './ThemeProvider';
-import { normalizeTimeString } from '../utils/timeUtils';
+import { Edit, MapPin } from 'lucide-react';
+import type { ThemeConfig } from '../hooks/useTheme';
+import type { DiaryEntry } from '../types/index.ts';
+import type { ArchiveDisplayMode } from './archive/archiveTypes';
+import { getArchiveEntryIndicators, getArchiveEntryTimestamp } from './archive/archiveEntryMeta';
+import { getEntryPreview } from './entry/entryContent';
+import { EntrySummaryText, EntryTagList, EntryTitleBlock } from './entry/entryDisplay';
 
-interface ArchiveEntryRenderersProps {
+interface ArchiveEntryRendererProps {
   entry: DiaryEntry;
-  onEdit?: (entry: DiaryEntry) => void;
+  displayMode: ArchiveDisplayMode;
+  theme: ThemeConfig;
+  isAdminAuthenticated: boolean;
   isMobile: boolean;
+  onEdit?: (entry: DiaryEntry) => void;
+  onPreview?: (entry: DiaryEntry) => void;
+  isHighlighted?: boolean;
 }
 
-export function ArchiveEntryRenderers() {
-  const { theme } = useThemeContext();
+function ArchiveEditButton({
+  entry,
+  onEdit,
+  theme,
+  label = '编辑',
+}: {
+  entry: DiaryEntry;
+  onEdit?: (entry: DiaryEntry) => void;
+  theme: ThemeConfig;
+  label?: string;
+}) {
+  if (!onEdit) {
+    return null;
+  }
 
-  const formatEntryDate = (dateString: string) => {
-    const date = new Date(normalizeTimeString(dateString));
-    return `${date.getMonth() + 1}月${date.getDate()}日`;
-  };
-
-  const formatEntryTime = (dateString: string) => {
-    const date = new Date(normalizeTimeString(dateString));
-    return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
-  };
-
-  const getMoodDisplay = (mood?: string) => {
-    const moodEmojis: Record<string, string> = {
-      happy: '😊',
-      sad: '😢',
-      neutral: '😐',
-      excited: '🤩',
-      anxious: '😰',
-      peaceful: '😌'
-    };
-    return moodEmojis[mood || 'neutral'] || '😐';
-  };
-
-  const getWeatherDisplay = (weather?: string) => {
-    const weatherEmojis: Record<string, string> = {
-      sunny: '☀️',
-      cloudy: '☁️',
-      rainy: '🌧️',
-      snowy: '❄️'
-    };
-    return weatherEmojis[weather || 'unknown'] || '';
-  };
-
-  // 卡片模式渲染
-  const renderCardEntry = ({ entry, onEdit, isMobile }: ArchiveEntryRenderersProps) => (
-    <div
-      key={entry.id}
-      className={`p-4 rounded-lg border cursor-pointer transition-all hover:shadow-md ${isMobile ? 'mb-3' : 'mb-4'}`}
-      style={{
-        backgroundColor: theme.mode === 'glass' 
-          ? 'rgba(255, 255, 255, 0.05)' 
-          : theme.colors.surface,
-        borderColor: theme.mode === 'glass' 
-          ? 'rgba(255, 255, 255, 0.1)' 
-          : theme.colors.border,
-        backdropFilter: theme.mode === 'glass' ? 'blur(5px)' : 'none'
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onEdit(entry);
       }}
-      onClick={() => onEdit?.(entry)}
+      className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-transform duration-200 hover:-translate-y-0.5"
+      style={{
+        backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.1)' : 'rgba(255, 255, 255, 0.72)',
+        border: `1px solid ${theme.colors.border}`,
+        color: theme.colors.textSecondary,
+      }}
+      title="编辑这篇日记"
     >
-      {/* 卡片头部 */}
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div
-            className="px-2 py-1 rounded text-xs font-medium"
-            style={{
-              backgroundColor: `${theme.colors.primary}20`,
-              color: theme.colors.primary
-            }}
-          >
-            {formatEntryDate(entry.created_at!)}
-          </div>
-          <span className="text-xs" style={{ color: theme.colors.textSecondary }}>
-            {formatEntryTime(entry.created_at!)}
-          </span>
-        </div>
-        <div className="flex items-center gap-1">
-          {entry.mood && entry.mood !== 'neutral' && (
-            <span className="text-lg">{getMoodDisplay(entry.mood)}</span>
-          )}
-          {entry.weather && entry.weather !== 'unknown' && (
-            <span className="text-lg">{getWeatherDisplay(entry.weather)}</span>
-          )}
-        </div>
-      </div>
-
-      {/* 标题 */}
-      <h4 className={`${isMobile ? 'text-sm' : 'text-base'} font-semibold mb-2 line-clamp-1`}
-          style={{ color: theme.mode === 'glass' ? 'white' : theme.colors.text }}>
-        {entry.title || '无标题'}
-      </h4>
-
-      {/* 内容预览 */}
-      <p className={`${isMobile ? 'text-xs' : 'text-sm'} line-clamp-3 mb-3`}
-         style={{ color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary }}>
-        {entry.content}
-      </p>
-
-      {/* 底部信息 */}
-      <div className="flex items-center justify-between text-xs">
-        <div className="flex items-center gap-3">
-          {entry.tags && entry.tags.length > 0 && (
-            <div className="flex items-center gap-1">
-              <Tag className="w-3 h-3" />
-              <span style={{ color: theme.colors.textSecondary }}>
-                {entry.tags.slice(0, 2).map(tag => `#${tag}`).join(' ')}
-                {entry.tags.length > 2 && ` +${entry.tags.length - 2}`}
-              </span>
-            </div>
-          )}
-          {entry.location && entry.location.name && (
-            <div className="flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
-              <span style={{ color: theme.colors.textSecondary }}>
-                {entry.location.name}
-              </span>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+      <Edit className="h-3.5 w-3.5" />
+      {label}
+    </button>
   );
+}
 
-  // 紧凑模式渲染
-  const renderCompactEntry = ({ entry, onEdit, isMobile }: ArchiveEntryRenderersProps) => (
-    <div
-      key={entry.id}
-      className="flex items-center gap-3 p-2 rounded-lg hover:bg-opacity-50 transition-colors cursor-pointer"
-      style={{
-        backgroundColor: theme.mode === 'glass' 
-          ? 'rgba(255, 255, 255, 0.02)' 
-          : 'transparent'
-      }}
-      onClick={() => onEdit?.(entry)}
-    >
-      {/* 日期时间 */}
-      <div className="flex-shrink-0 text-center">
-        <div className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium`}
-             style={{ color: theme.colors.primary }}>
-          {formatEntryDate(entry.created_at!)}
-        </div>
-        <div className="text-xs" style={{ color: theme.colors.textSecondary }}>
-          {formatEntryTime(entry.created_at!)}
-        </div>
-      </div>
-
-      {/* 内容 */}
-      <div className="flex-1 min-w-0">
-        <div className="flex items-center gap-2 mb-1">
-          <h4 className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium truncate`}
-              style={{ color: theme.mode === 'glass' ? 'white' : theme.colors.text }}>
-            {entry.title || '无标题'}
-          </h4>
-          <div className="flex items-center gap-1">
-            {entry.mood && entry.mood !== 'neutral' && (
-              <span className="text-xs">{getMoodDisplay(entry.mood)}</span>
-            )}
-            {entry.weather && entry.weather !== 'unknown' && (
-              <span className="text-xs">{getWeatherDisplay(entry.weather)}</span>
-            )}
-          </div>
-        </div>
-        <p className="text-xs line-clamp-1" 
-           style={{ color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.6)' : theme.colors.textSecondary }}>
-          {entry.content.substring(0, 60)}...
-        </p>
-      </div>
-
-      {/* 标签 */}
-      {entry.tags && entry.tags.length > 0 && (
-        <div className="flex-shrink-0">
-          <span className="text-xs px-2 py-1 rounded"
-                style={{ 
-                  backgroundColor: `${theme.colors.primary}15`,
-                  color: theme.colors.primary 
-                }}>
-            #{entry.tags[0]}
-            {entry.tags.length > 1 && ` +${entry.tags.length - 1}`}
-          </span>
+function ArchiveEntryMetaRow({
+  entry,
+  theme,
+  moodDisplay,
+  weatherDisplay,
+}: {
+  entry: DiaryEntry;
+  theme: ThemeConfig;
+  moodDisplay: string | null;
+  weatherDisplay: string | null;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-4 text-xs">
+      {entry.location?.name && (
+        <div className="flex items-center gap-1">
+          <MapPin className="h-3 w-3" />
+          <span style={{ color: theme.colors.textSecondary }}>{entry.location.name}</span>
         </div>
       )}
+      {moodDisplay && <span className="text-sm">{moodDisplay}</span>}
+      {weatherDisplay && <span className="text-sm">{weatherDisplay}</span>}
     </div>
   );
+}
 
-  // 时间线模式渲染
-  const renderTimelineEntry = ({ entry, onEdit, isMobile }: ArchiveEntryRenderersProps) => (
-    <div key={entry.id} className="flex gap-4 pb-4">
-      {/* 时间轴线 */}
-      <div className="flex flex-col items-center">
-        <div
-          className="w-3 h-3 rounded-full border-2"
-          style={{
-            backgroundColor: theme.colors.primary,
-            borderColor: theme.colors.primary
-          }}
-        />
-        <div
-          className="w-0.5 h-full mt-2"
-          style={{ backgroundColor: `${theme.colors.primary}30` }}
-        />
-      </div>
+function ArchiveTagSection({
+  entry,
+  theme,
+  isMobile,
+  tagLimit,
+  className = '',
+}: {
+  entry: DiaryEntry;
+  theme: ThemeConfig;
+  isMobile: boolean;
+  tagLimit: number;
+  className?: string;
+}) {
+  if (!entry.tags || entry.tags.length === 0) {
+    return null;
+  }
 
-      {/* 内容 */}
+  const visibleTags = entry.tags.slice(0, tagLimit);
+
+  return (
+    <div className={className}>
+      <EntryTagList
+        theme={theme}
+        tags={visibleTags}
+        isMobile={isMobile}
+        extraCount={Math.max(0, entry.tags.length - visibleTags.length)}
+      />
+    </div>
+  );
+}
+
+export function ArchiveEntryRenderer({
+  entry,
+  displayMode,
+  theme,
+  isAdminAuthenticated,
+  isMobile,
+  onEdit,
+  onPreview,
+  isHighlighted = false,
+}: ArchiveEntryRendererProps) {
+  const { dateLabel, timeLabel } = getArchiveEntryTimestamp(entry.created_at!);
+  const { moodDisplay, weatherDisplay } = getArchiveEntryIndicators(entry.mood, entry.weather);
+  const canEdit = Boolean(onEdit && isAdminAuthenticated);
+  const openPreview = () => onPreview?.(entry);
+
+  if (displayMode === 'list') {
+    return (
       <div
-        className="flex-1 p-3 rounded-lg cursor-pointer transition-colors hover:bg-opacity-80"
+        id={entry.id ? `entry-${entry.id}` : undefined}
+        className={`archive-entry-shell cursor-pointer p-4 transition-all duration-500 hover:bg-opacity-50 ${isHighlighted ? 'ring-highlight rounded-xl' : ''}`}
         style={{
-          backgroundColor: theme.mode === 'glass' 
-            ? 'rgba(255, 255, 255, 0.05)' 
-            : theme.colors.surface,
-          border: `1px solid ${theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.1)' : theme.colors.border}`
+          backgroundColor: isHighlighted ? `${theme.colors.primary}08` : 'transparent',
+          boxShadow: isHighlighted ? `0 0 0 2px ${theme.colors.primary}20` : 'none',
         }}
-        onClick={() => onEdit?.(entry)}
+        onClick={openPreview}
       >
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2">
-            <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium`}
-                  style={{ color: theme.colors.primary }}>
-              {formatEntryDate(entry.created_at!)} {formatEntryTime(entry.created_at!)}
-            </span>
-            <div className="flex items-center gap-1">
-              {entry.mood && entry.mood !== 'neutral' && (
-                <span className="text-sm">{getMoodDisplay(entry.mood)}</span>
-              )}
-              {entry.weather && entry.weather !== 'unknown' && (
-                <span className="text-sm">{getWeatherDisplay(entry.weather)}</span>
-              )}
+        <div className="flex items-start gap-3">
+          <div className="flex-shrink-0">
+            <div
+              className={`flex h-12 w-12 flex-col items-center justify-center rounded-lg font-medium ${isMobile ? 'text-xs' : 'text-sm'}`}
+              style={{
+                backgroundColor: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.1)' : `${theme.colors.primary}15`,
+                color: theme.mode === 'glass' ? 'white' : theme.colors.primary,
+              }}
+            >
+              <span>{dateLabel}</span>
             </div>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            <div className="mb-2 flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <EntryTitleBlock
+                  theme={theme}
+                  title={entry.title || '无标题'}
+                  isMobile={isMobile}
+                  size="archive"
+                  clampClassName="truncate"
+                />
+              </div>
+              <div className="flex items-center gap-1">
+                {moodDisplay && <span className="text-sm">{moodDisplay}</span>}
+                {weatherDisplay && <span className="text-sm">{weatherDisplay}</span>}
+              </div>
+              {canEdit && <div className="ml-auto"><ArchiveEditButton entry={entry} onEdit={onEdit} theme={theme} /></div>}
+            </div>
+
+            <EntrySummaryText theme={theme} isMobile={isMobile} lines={2} className="mb-2">
+              {getEntryPreview(entry.content, 100)}
+            </EntrySummaryText>
+
+            <ArchiveTagSection
+              entry={entry}
+              theme={theme}
+              isMobile={isMobile}
+              tagLimit={2}
+              className="mb-2"
+            />
+
+            <ArchiveEntryMetaRow
+              entry={entry}
+              theme={theme}
+              moodDisplay={null}
+              weatherDisplay={null}
+            />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (displayMode === 'cards') {
+    return (
+      <div
+        id={entry.id ? `entry-${entry.id}` : undefined}
+        className={`archive-entry-shell cursor-pointer rounded-lg border p-4 transition-all hover:shadow-md ${isMobile ? 'mb-3' : 'mb-4'} ${isHighlighted ? 'ring-highlight' : ''}`}
+        style={{
+          backgroundColor: theme.mode === 'glass'
+            ? 'rgba(255, 255, 255, 0.05)'
+            : isHighlighted
+              ? `${theme.colors.primary}08`
+              : theme.colors.surface,
+          borderColor: theme.mode === 'glass'
+            ? 'rgba(255, 255, 255, 0.1)'
+            : isHighlighted
+              ? theme.colors.primary
+              : theme.colors.border,
+          backdropFilter: theme.mode === 'glass' ? 'blur(5px)' : 'none',
+          boxShadow: isHighlighted ? `0 0 0 2px ${theme.colors.primary}20` : 'none',
+        }}
+        onClick={openPreview}
+      >
+        <div className="mb-3 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div
+              className="rounded px-2 py-1 text-xs font-medium"
+              style={{
+                backgroundColor: `${theme.colors.primary}20`,
+                color: theme.colors.primary,
+              }}
+            >
+              {dateLabel}
+            </div>
+            <span className="text-xs" style={{ color: theme.colors.textSecondary }}>
+              {timeLabel}
+            </span>
+          </div>
+          <div className="flex items-center gap-1">
+            {moodDisplay && <span className="text-lg">{moodDisplay}</span>}
+            {weatherDisplay && <span className="text-lg">{weatherDisplay}</span>}
+            {canEdit && <ArchiveEditButton entry={entry} onEdit={onEdit} theme={theme} />}
           </div>
         </div>
 
-        <h4 className={`${isMobile ? 'text-sm' : 'text-base'} font-medium mb-2`}
-            style={{ color: theme.mode === 'glass' ? 'white' : theme.colors.text }}>
-          {entry.title || '无标题'}
-        </h4>
+        <EntryTitleBlock
+          theme={theme}
+          title={entry.title || '无标题'}
+          isMobile={isMobile}
+          size="archive"
+          clampClassName="line-clamp-1"
+        />
 
-        <p className={`${isMobile ? 'text-xs' : 'text-sm'} line-clamp-2 mb-2`}
-           style={{ color: theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.8)' : theme.colors.textSecondary }}>
-          {entry.content}
-        </p>
+        <EntrySummaryText theme={theme} isMobile={isMobile} lines={3} className="mb-3">
+          {getEntryPreview(entry.content, 140)}
+        </EntrySummaryText>
 
-        <div className="flex items-center gap-4 text-xs">
-          {entry.tags && entry.tags.length > 0 && (
-            <div className="flex items-center gap-1">
-              <Tag className="w-3 h-3" />
-              <span style={{ color: theme.colors.textSecondary }}>
-                {entry.tags.slice(0, 3).map(tag => `#${tag}`).join(' ')}
-                {entry.tags.length > 3 && ` +${entry.tags.length - 3}`}
-              </span>
-            </div>
-          )}
-          {entry.location && entry.location.name && (
-            <div className="flex items-center gap-1">
-              <MapPin className="w-3 h-3" />
-              <span style={{ color: theme.colors.textSecondary }}>
-                {entry.location.name}
-              </span>
-            </div>
-          )}
+        <ArchiveTagSection
+          entry={entry}
+          theme={theme}
+          isMobile={isMobile}
+          tagLimit={2}
+          className="mb-3"
+        />
+
+        <ArchiveEntryMetaRow
+          entry={entry}
+          theme={theme}
+          moodDisplay={null}
+          weatherDisplay={null}
+        />
+      </div>
+    );
+  }
+
+  if (displayMode === 'compact') {
+    return (
+      <div
+        id={entry.id ? `entry-${entry.id}` : undefined}
+        className={`archive-entry-shell flex cursor-pointer items-center gap-3 rounded-lg p-2 transition-all hover:bg-opacity-50 ${isHighlighted ? 'ring-highlight' : ''}`}
+        style={{
+          backgroundColor: theme.mode === 'glass'
+            ? 'rgba(255, 255, 255, 0.02)'
+            : isHighlighted
+              ? `${theme.colors.primary}08`
+              : 'transparent',
+          boxShadow: isHighlighted ? `0 0 0 2px ${theme.colors.primary}20` : 'none',
+        }}
+        onClick={openPreview}
+      >
+        <div className="flex-shrink-0 text-center">
+          <div className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium`} style={{ color: theme.colors.primary }}>
+            {dateLabel}
+          </div>
+          <div className="text-xs" style={{ color: theme.colors.textSecondary }}>
+            {timeLabel}
+          </div>
         </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-1 flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <EntryTitleBlock
+                theme={theme}
+                title={entry.title || '无标题'}
+                isMobile={isMobile}
+                size="compact"
+                clampClassName="truncate"
+              />
+            </div>
+            <div className="flex items-center gap-1">
+              {moodDisplay && <span className="text-xs">{moodDisplay}</span>}
+              {weatherDisplay && <span className="text-xs">{weatherDisplay}</span>}
+            </div>
+            {canEdit && <div className="ml-auto"><ArchiveEditButton entry={entry} onEdit={onEdit} theme={theme} label="" /></div>}
+          </div>
+
+          <EntrySummaryText theme={theme} isMobile={isMobile} lines={1}>
+            {getEntryPreview(entry.content, 60)}
+          </EntrySummaryText>
+        </div>
+
+        <ArchiveTagSection entry={entry} theme={theme} isMobile={isMobile} tagLimit={1} className="flex-shrink-0" />
+      </div>
+    );
+  }
+
+  return (
+    <div id={entry.id ? `entry-${entry.id}` : undefined} className={`archive-entry-shell flex gap-4 pb-4 ${isHighlighted ? 'ring-highlight rounded-xl' : ''}`}>
+      <div className="flex flex-col items-center">
+        <div
+          className="h-3 w-3 rounded-full border-2"
+          style={{
+            backgroundColor: theme.colors.primary,
+            borderColor: theme.colors.primary,
+          }}
+        />
+        <div className="mt-2 h-full w-0.5" style={{ backgroundColor: `${theme.colors.primary}30` }} />
+      </div>
+
+      <div
+        className="flex-1 cursor-pointer rounded-lg p-3 transition-colors hover:bg-opacity-80"
+        style={{
+          backgroundColor: theme.mode === 'glass'
+            ? 'rgba(255, 255, 255, 0.05)'
+            : isHighlighted
+              ? `${theme.colors.primary}08`
+              : theme.colors.surface,
+          border: `1px solid ${theme.mode === 'glass' ? 'rgba(255, 255, 255, 0.1)' : isHighlighted ? theme.colors.primary : theme.colors.border}`,
+          boxShadow: isHighlighted ? `0 0 0 2px ${theme.colors.primary}20` : 'none',
+        }}
+        onClick={openPreview}
+      >
+        <div className="mb-2 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className={`${isMobile ? 'text-xs' : 'text-sm'} font-medium`} style={{ color: theme.colors.primary }}>
+              {dateLabel} {timeLabel}
+            </span>
+            <div className="flex items-center gap-1">
+              {moodDisplay && <span className="text-sm">{moodDisplay}</span>}
+              {weatherDisplay && <span className="text-sm">{weatherDisplay}</span>}
+            </div>
+          </div>
+          {canEdit && <ArchiveEditButton entry={entry} onEdit={onEdit} theme={theme} />}
+        </div>
+
+        <EntryTitleBlock
+          theme={theme}
+          title={entry.title || '无标题'}
+          isMobile={isMobile}
+          size="archive"
+          clampClassName="line-clamp-1"
+        />
+
+        <EntrySummaryText theme={theme} isMobile={isMobile} lines={2} className="mb-2">
+          {getEntryPreview(entry.content, 100)}
+        </EntrySummaryText>
+
+        <ArchiveTagSection
+          entry={entry}
+          theme={theme}
+          isMobile={isMobile}
+          tagLimit={3}
+          className="mb-2"
+        />
+
+        <ArchiveEntryMetaRow
+          entry={entry}
+          theme={theme}
+          moodDisplay={null}
+          weatherDisplay={null}
+        />
       </div>
     </div>
   );
-
-  return {
-    renderCardEntry,
-    renderCompactEntry,
-    renderTimelineEntry
-  };
 }

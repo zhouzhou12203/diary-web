@@ -1,26 +1,22 @@
-import { Sun, Moon, Sparkles } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
 
-const themeIcons = {
-  light: Sun,
-  dark: Moon,
-  glass: Sparkles,
-};
-
 const themeNames = {
-  light: '白天模式',
-  dark: '夜间模式',
-  glass: '玻璃模式',
+  light: '纸页',
+  dark: '夜读',
+  glass: '雾面',
 };
 
 export function ThemeToggle() {
   const { currentTheme, toggleTheme } = useThemeContext();
-  const Icon = themeIcons[currentTheme];
+  const nextThemeName = currentTheme === 'light' ? themeNames.dark : currentTheme === 'dark' ? themeNames.glass : themeNames.light;
+  const themeAccent = currentTheme === 'light' ? '#f59e0b' : currentTheme === 'dark' ? '#334155' : '#38bdf8';
 
   return (
     <button
       onClick={toggleTheme}
-      className="relative p-2 md:p-2 rounded-full transition-all duration-300 hover:scale-110 group"
+      aria-label={`当前主题 ${themeNames[currentTheme]}，点击切换到 ${nextThemeName}`}
+      aria-description="主题切换按钮，会按顺序在纸页、夜读和雾面之间切换。"
+      className="group relative flex items-center gap-1.5 rounded-xl px-2.5 py-2 transition-transform duration-200 hover:-translate-y-0.5 md:gap-2 md:rounded-2xl md:px-3"
       style={{
         backgroundColor: 'var(--color-surface)',
         color: 'var(--color-primary)',
@@ -28,19 +24,16 @@ export function ThemeToggle() {
       }}
       title={`当前: ${themeNames[currentTheme]} (点击切换)`}
     >
-      <Icon className="w-4 h-4 md:w-5 md:h-5 transition-transform duration-300 group-hover:rotate-12" />
+      <span
+        className="h-2 w-2 rounded-full transition-transform duration-300 group-hover:scale-110 md:h-2.5 md:w-2.5"
+        style={{ backgroundColor: themeAccent }}
+        aria-hidden="true"
+      />
+      <span className="hidden text-sm font-medium md:inline">{themeNames[currentTheme]}</span>
 
       {/* 主题指示器 */}
-      <div className="absolute -bottom-1 -right-1 w-2.5 h-2.5 md:w-3 md:h-3 rounded-full border-2 border-white">
-        {currentTheme === 'light' && (
-          <div className="w-full h-full bg-yellow-400 rounded-full"></div>
-        )}
-        {currentTheme === 'dark' && (
-          <div className="w-full h-full bg-slate-700 rounded-full"></div>
-        )}
-        {currentTheme === 'glass' && (
-          <div className="w-full h-full bg-gradient-to-r from-indigo-400 to-purple-500 rounded-full"></div>
-        )}
+      <div className="absolute -right-1 -top-1 hidden h-2.5 w-2.5 rounded-full border-2 border-white md:block md:h-3 md:w-3">
+        <div className="w-full h-full rounded-full" style={{ backgroundColor: themeAccent }} />
       </div>
     </button>
   );

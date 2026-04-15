@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { useBodyScrollLock } from '../hooks/useBodyScrollLock';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 interface ImageViewerProps {
   images: string[];
@@ -10,6 +12,8 @@ interface ImageViewerProps {
 
 export function ImageViewer({ images, initialIndex, isOpen, onClose }: ImageViewerProps) {
   const [currentIndex, setCurrentIndex] = useState(initialIndex);
+  const isMobile = useIsMobile();
+  useBodyScrollLock(isOpen);
 
   useEffect(() => {
     setCurrentIndex(initialIndex);
@@ -55,11 +59,23 @@ export function ImageViewer({ images, initialIndex, isOpen, onClose }: ImageView
       />
       
       {/* 图片容器 */}
-      <div className="relative max-w-[90vw] max-h-[90vh] flex items-center justify-center">
+      <div
+        className="relative flex items-center justify-center"
+        style={{
+          maxWidth: isMobile ? '100vw' : '90vw',
+          maxHeight: isMobile ? '100dvh' : '90vh',
+          width: isMobile ? '100vw' : undefined,
+          paddingTop: isMobile ? 'max(16px, var(--safe-area-top))' : undefined,
+          paddingBottom: isMobile ? 'max(16px, var(--safe-area-bottom))' : undefined,
+          paddingLeft: isMobile ? 'max(12px, var(--safe-area-left))' : undefined,
+          paddingRight: isMobile ? 'max(12px, var(--safe-area-right))' : undefined,
+        }}
+      >
         {/* 关闭按钮 */}
         <button
           onClick={onClose}
-          className="absolute top-4 right-4 z-10 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-all duration-200"
+          className="absolute z-10 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-all duration-200"
+          style={{ top: isMobile ? 'max(12px, var(--safe-area-top))' : '16px', right: isMobile ? 'max(12px, var(--safe-area-right))' : '16px' }}
         >
           <X className="w-6 h-6" />
         </button>
@@ -69,6 +85,7 @@ export function ImageViewer({ images, initialIndex, isOpen, onClose }: ImageView
           <button
             onClick={goToPrevious}
             className="absolute left-4 z-10 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-all duration-200"
+            style={{ left: isMobile ? 'max(8px, var(--safe-area-left))' : '16px' }}
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
@@ -78,7 +95,8 @@ export function ImageViewer({ images, initialIndex, isOpen, onClose }: ImageView
         {images.length > 1 && (
           <button
             onClick={goToNext}
-            className="absolute right-4 z-10 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-all duration-200"
+            className="absolute z-10 p-2 rounded-full bg-black bg-opacity-50 text-white hover:bg-opacity-70 transition-all duration-200"
+            style={{ right: isMobile ? 'max(8px, var(--safe-area-right))' : '16px' }}
           >
             <ChevronRight className="w-6 h-6" />
           </button>
@@ -89,12 +107,16 @@ export function ImageViewer({ images, initialIndex, isOpen, onClose }: ImageView
           src={images[currentIndex]}
           alt={`图片 ${currentIndex + 1}`}
           className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-          style={{ maxWidth: '90vw', maxHeight: '90vh' }}
+          decoding="async"
+          style={{ maxWidth: isMobile ? '100%' : '90vw', maxHeight: isMobile ? 'calc(100dvh - 120px)' : '90vh' }}
         />
 
         {/* 图片计数器 */}
         {images.length > 1 && (
-          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full bg-black bg-opacity-50 text-white text-sm">
+          <div
+            className="absolute left-1/2 transform -translate-x-1/2 px-3 py-1 rounded-full bg-black bg-opacity-50 text-white text-sm"
+            style={{ bottom: isMobile ? 'max(12px, var(--safe-area-bottom))' : '16px' }}
+          >
             {currentIndex + 1} / {images.length}
           </div>
         )}

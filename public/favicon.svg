@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="我的日记">
+  <defs>
+    <linearGradient id="cover" x1="18" x2="110" y1="16" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb" />
+      <stop offset="1" stop-color="#c2410c" />
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="28" fill="#f3eee2" />
+  <path d="M34 24h42c11.046 0 20 8.954 20 20v48c0 6.627-5.373 12-12 12H42c-4.418 0-8 3.582-8 8V32c0-4.418 3.582-8 8-8Z" fill="url(#cover)" />
+  <path d="M44 38h34" stroke="#fffdf7" stroke-linecap="round" stroke-width="7" />
+  <path d="M44 55h34" stroke="#fffdf7" stroke-linecap="round" stroke-width="7" stroke-opacity=".92" />
+  <path d="M44 72h24" stroke="#fffdf7" stroke-linecap="round" stroke-width="7" stroke-opacity=".82" />
+  <path d="M34 32c0-4.418 3.582-8 8-8h6v88h-6c-4.418 0-8-3.582-8-8V32Z" fill="#1f2937" fill-opacity=".16" />
+</svg>
