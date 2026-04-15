@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react';
 
+function readNavigatorStandalone() {
+  return typeof navigator !== 'undefined' && 'standalone' in navigator
+    ? Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
+    : false;
+}
+
 function detectStandaloneMode() {
   if (typeof window === 'undefined') {
     return false;
   }
 
-  return window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
+  return (
+    window.matchMedia('(display-mode: standalone)').matches ||
+    window.matchMedia('(display-mode: fullscreen)').matches ||
+    readNavigatorStandalone()
+  );
 }
 
 export function useStandaloneMode() {
@@ -18,11 +28,7 @@ export function useStandaloneMode() {
     ];
 
     const updateStandaloneState = () => {
-      const navigatorStandalone = typeof navigator !== 'undefined' && 'standalone' in navigator
-        ? Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
-        : false;
-
-      setIsStandalone(mediaQueries.some((query) => query.matches) || navigatorStandalone);
+      setIsStandalone(mediaQueries.some((query) => query.matches) || readNavigatorStandalone());
     };
 
     updateStandaloneState();
