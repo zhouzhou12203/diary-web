@@ -7,6 +7,7 @@
 - `src/App.tsx` 只保留应用级会话流转、欢迎页/密码页切换、主内容装配和弹窗入口。
 - `src/components/app/AppHeader.tsx` 负责顶部标题、主题切换、刷新和管理员入口。
 - `src/components/app/AppBrowsePanel.tsx` 负责搜索、快速筛选、视图切换、导出入口和阅读区概览。
+- `src/hooks/useInstallPrompt.ts` 统一承载 PWA 安装提示与浏览器级安装事件，避免把 `beforeinstallprompt` 逻辑散落回壳层组件。
 - `src/components/app/ActiveBrowseSummary.tsx` 负责当前搜索/筛选结果摘要、导出当前结果和条件 chip 清理。
 - `src/components/app/RecommendationsPanel.tsx` 负责推荐回看入口，放在 browse summary 与正文列表之间。
 
@@ -34,6 +35,7 @@
 - `src/components/SearchBar.tsx` 在移动端优先压缩输入区、建议区和高级筛选卡片的纵向高度；最近搜索仅在空查询时展示，避免建议层过厚。
 - `src/components/QuickFilters.tsx` 在移动端采用标签全宽、年份和月份并列的两列布局，减少一屏内的滚动长度。
 - `src/components/app/AppBrowsePanel.tsx` 在移动端优先使用状态胶囊和紧凑操作区，而不是重复堆叠指标卡，首屏空间优先让给内容列表。
+- `src/components/app/AppBrowsePanel.tsx` 的设备与离线卡片应提供实际可点击的安装入口，或在不支持 prompt 的浏览器里给出简短人工安装提示，而不是只停留在说明文案。
 - `src/components/app/AppBrowsePanel.tsx` 的视图/状态指标应优先使用配置数组驱动，移动端只保留最关键的状态胶囊和紧凑动作，不要继续扩写独立卡片 JSX。
 - `src/components/app/RecommendationsPanel.tsx` 在移动端保持单列、短文案和单一主动作，不把推荐区做成横向复杂 carousel。
 - `src/components/app/ActiveBrowseSummary.tsx` 在移动端保持短摘要、短按钮文案和受控数量的条件 chip，避免搜索结果摘要再次占据整屏高度。

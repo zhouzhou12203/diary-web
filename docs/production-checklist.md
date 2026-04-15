@@ -42,6 +42,7 @@
 - `GET /api/stats` 已按预期鉴权并返回数据。
 - `favicon.svg` 与 `manifest.webmanifest` 可访问，独立窗口模式入口正常。
 - `sw.js` 可访问且成功注册，断网时仍可打开应用壳层与最近公开内容快照。
+- 非 standalone 状态下，设备与离线卡片能显示浏览器安装按钮或“添加到主屏幕”提示。
 - 浏览器响应头已生效：`Content-Security-Policy`、`Strict-Transport-Security`、`X-Content-Type-Options`。
 - API 响应已返回 `Cache-Control: no-store`，登录态与设置接口不会被中间层缓存。
 

@@ -5,6 +5,7 @@ import type { ViewMode } from '../ViewModeToggle';
 import type { BrowseDescriptor, BrowseSummaryItem, ClearRequest } from '../../hooks/useBrowseState';
 import type { DiaryEntry } from '../../types/index.ts';
 import { ContentStatePanel } from '../ContentStatePanel';
+import { useInstallPrompt } from '../../hooks/useInstallPrompt';
 import { useIsMobile } from '../../hooks/useIsMobile';
 import { useOnlineStatus } from '../../hooks/useOnlineStatus';
 import { useStandaloneMode } from '../../hooks/useStandaloneMode';
@@ -158,6 +159,7 @@ export function AppBrowsePanel({
   const isMobile = useIsMobile();
   const isOnline = useOnlineStatus();
   const isStandalone = useStandaloneMode();
+  const { canPromptInstall, lastOutcome, manualInstallHint, promptInstall } = useInstallPrompt(isStandalone);
   const shellSurfaceStyle = getShellSurfaceStyle(theme);
   const mutedSurfaceStyle = getMutedSurfaceStyle(theme);
   const quietButtonStyle = getQuietButtonStyle(theme);
@@ -387,6 +389,36 @@ export function AppBrowsePanel({
                 最近公开内容可做离线快照
               </div>
             </div>
+
+            {!isStandalone && (
+              <div className={`rounded-2xl ${isMobile ? 'space-y-2 p-2.5' : 'space-y-3 p-3'}`} style={shellSurfaceStyle}>
+                <div className={`${isMobile ? 'text-xs leading-5' : 'text-sm leading-6'}`} style={{ color: theme.colors.textSecondary }}>
+                  {canPromptInstall
+                    ? '浏览器已准备好安装入口，安装后可更像本地应用一样从主屏幕或桌面打开。'
+                    : lastOutcome === 'accepted'
+                      ? '安装请求已接受，浏览器完成安装后就能以独立应用方式打开。'
+                    : lastOutcome === 'dismissed'
+                      ? '已关闭安装弹窗，稍后仍可从浏览器菜单中安装。'
+                      : manualInstallHint}
+                </div>
+
+                {canPromptInstall && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void promptInstall();
+                    }}
+                    className={`inline-flex items-center gap-2 rounded-xl font-medium transition-transform duration-200 hover:-translate-y-0.5 ${
+                      isMobile ? 'px-3 py-2 text-xs' : 'px-3.5 py-2 text-sm'
+                    }`}
+                    style={primaryButtonStyle}
+                  >
+                    <Download className={isMobile ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+                    {isMobile ? '安装应用' : '安装到设备'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </aside>
       </div>
