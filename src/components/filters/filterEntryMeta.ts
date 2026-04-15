@@ -10,6 +10,14 @@ export interface FilterMeta {
   availableMonthsByYear: Record<string, string[]>;
 }
 
+export interface FilterMetaControls {
+  availableTags: string[];
+  untaggedEntryCount: number;
+  availableYears: string[];
+  availableMonths?: string[];
+  availableMonthsByYear: Record<string, string[]>;
+}
+
 function getVisibleEntries(entries: DiaryEntry[], includeHidden = false) {
   return entries.filter((entry) => includeHidden || !entry.hidden);
 }
@@ -90,6 +98,20 @@ function getAvailableMonthsByYear(entries: DiaryEntry[], includeHidden = false) 
   ) as Record<string, string[]>;
 }
 
+function intersectList(values: string[], allowedValues: string[]) {
+  const allowed = new Set(allowedValues);
+  const seen = new Set<string>();
+
+  return values.filter((value) => {
+    if (!allowed.has(value) || seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return true;
+  });
+}
+
 export function buildFilterMeta(entries: DiaryEntry[], includeHidden = false): FilterMeta {
   const visibleEntries = getVisibleEntries(entries, includeHidden);
 
@@ -100,5 +122,31 @@ export function buildFilterMeta(entries: DiaryEntry[], includeHidden = false): F
     availableYears: getAvailableYears(entries, includeHidden),
     availableMonths: getAvailableMonths(entries, undefined, includeHidden),
     availableMonthsByYear: getAvailableMonthsByYear(entries, includeHidden),
+  };
+}
+
+export function sanitizeFilterMetaControls(
+  controls: FilterMetaControls,
+  entries: DiaryEntry[],
+  includeHidden = false
+): FilterMetaControls {
+  const safeMeta = buildFilterMeta(entries, includeHidden);
+
+  return {
+    availableTags: intersectList(controls.availableTags, safeMeta.availableTags),
+    untaggedEntryCount: safeMeta.untaggedEntryCount,
+    availableYears: intersectList(controls.availableYears, safeMeta.availableYears),
+    availableMonths: controls.availableMonths
+      ? intersectList(controls.availableMonths, safeMeta.availableMonths)
+      : undefined,
+    availableMonthsByYear: Object.fromEntries(
+      Object.entries(controls.availableMonthsByYear)
+        .filter(([year]) => safeMeta.availableYears.includes(year))
+        .map(([year, months]) => [
+          year,
+          intersectList(months, safeMeta.availableMonthsByYear[year] ?? []),
+        ])
+        .filter(([, months]) => months.length > 0)
+    ) as Record<string, string[]>,
   };
 }

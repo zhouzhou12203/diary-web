@@ -1,9 +1,10 @@
-import { useDeferredValue, useEffect, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { Tag, Calendar, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { DiaryEntry } from '../types/index.ts';
 import { ActiveFilterChip, QuickFilterDropdown } from './filters/QuickFilterControls';
+import { sanitizeFilterMetaControls } from './filters/filterEntryMeta';
 import { normalizeTimeString } from '../utils/timeUtils.ts';
 
 interface QuickFiltersProps {
@@ -49,6 +50,29 @@ export function QuickFilters({
   const tagDropdownRef = useRef<HTMLDivElement>(null);
   const yearDropdownRef = useRef<HTMLDivElement>(null);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const effectiveFilterMeta = useMemo(
+    () =>
+      sanitizeFilterMetaControls(
+        {
+          availableTags,
+          untaggedEntryCount,
+          availableYears,
+          availableMonths,
+          availableMonthsByYear,
+        },
+        entries,
+        isAdminAuthenticated
+      ),
+    [
+      availableMonths,
+      availableMonthsByYear,
+      availableTags,
+      availableYears,
+      entries,
+      isAdminAuthenticated,
+      untaggedEntryCount,
+    ]
+  );
 
   // 点击外部关闭下拉框
   useEffect(() => {
@@ -202,11 +226,11 @@ export function QuickFilters({
   const tagOptions = [
     {
       key: '__no_tags__',
-      label: `📝 无标签 (${untaggedEntryCount})`,
+      label: `📝 无标签 (${effectiveFilterMeta.untaggedEntryCount})`,
       selected: selectedTags.includes('__no_tags__'),
       onSelect: () => toggleTag('__no_tags__'),
     },
-    ...availableTags.map((tag) => ({
+    ...effectiveFilterMeta.availableTags.map((tag) => ({
       key: tag,
       label: `#${tag}`,
       selected: selectedTags.includes(tag),
@@ -223,7 +247,7 @@ export function QuickFilters({
         setIsYearDropdownOpen(false);
       },
     },
-    ...availableYears.map((year) => ({
+    ...effectiveFilterMeta.availableYears.map((year) => ({
       key: year,
       label: `${year}年`,
       selected: selectedYear === year,
@@ -243,7 +267,9 @@ export function QuickFilters({
         setIsMonthDropdownOpen(false);
       },
     },
-    ...(selectedYear ? availableMonthsByYear[selectedYear] || [] : availableMonths).map((month) => ({
+    ...(selectedYear
+      ? effectiveFilterMeta.availableMonthsByYear[selectedYear] || []
+      : effectiveFilterMeta.availableMonths || []).map((month) => ({
       key: month,
       label: `${parseInt(month, 10)}月`,
       selected: selectedMonth === month,
@@ -317,7 +343,7 @@ export function QuickFilters({
             dropdownRef={tagDropdownRef}
             onToggle={() => setIsTagDropdownOpen(!isTagDropdownOpen)}
             options={tagOptions}
-            emptyState={availableTags.length === 0 && untaggedEntryCount === 0 ? (
+            emptyState={effectiveFilterMeta.availableTags.length === 0 && effectiveFilterMeta.untaggedEntryCount === 0 ? (
               <div
                 className="px-3 py-2 text-center text-sm opacity-60"
                 style={{ color: theme.colors.textSecondary }}

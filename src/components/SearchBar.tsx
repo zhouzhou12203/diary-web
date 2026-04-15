@@ -2,6 +2,7 @@ import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties, typ
 import { Calendar, Filter, Search, Tag, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
 import type { DiaryEntry } from '../types/index.ts';
+import { sanitizeFilterMetaControls } from './filters/filterEntryMeta';
 import { normalizeTimeString } from '../utils/timeUtils.ts';
 import { useIsMobile } from '../hooks/useIsMobile';
 
@@ -346,6 +347,20 @@ export function SearchBar({
   const deferredEntries = useDeferredValue(entries);
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const deferredSearchFilters = useDeferredValue(searchFilters);
+  const effectiveFilterMeta = useMemo(
+    () =>
+      sanitizeFilterMetaControls(
+        {
+          availableTags,
+          untaggedEntryCount,
+          availableYears,
+          availableMonthsByYear,
+        },
+        entries,
+        isAdminAuthenticated
+      ),
+    [availableMonthsByYear, availableTags, availableYears, entries, isAdminAuthenticated, untaggedEntryCount]
+  );
 
   const inputShellStyle: CSSProperties = {
     backgroundColor: theme.mode === 'glass' ? 'rgba(148, 163, 184, 0.08)' : 'rgba(255, 255, 255, 0.68)',
@@ -386,7 +401,7 @@ export function SearchBar({
     const visibleEntries = deferredEntries.filter((entry) => isAdminAuthenticated || !entry.hidden);
 
     if (deferredSearchFilters.searchInTags) {
-      availableTags.forEach((tag) => {
+      effectiveFilterMeta.availableTags.forEach((tag) => {
         const value = tag.trim();
         if (!value) {
           return;
@@ -426,7 +441,16 @@ export function SearchBar({
       tags: sortSuggestions(tagSuggestions, searchQuery, recentSearches).slice(0, Math.ceil(MAX_SEARCH_SUGGESTIONS / 2)),
       titles: sortSuggestions(titleSuggestions, searchQuery, recentSearches).slice(0, Math.floor(MAX_SEARCH_SUGGESTIONS / 2)),
     };
-  }, [availableTags, deferredEntries, deferredSearchFilters.searchInTags, deferredSearchFilters.searchInTitle, deferredSearchQuery, isAdminAuthenticated, recentSearches, searchQuery]);
+  }, [
+    deferredEntries,
+    deferredSearchFilters.searchInTags,
+    deferredSearchFilters.searchInTitle,
+    deferredSearchQuery,
+    effectiveFilterMeta.availableTags,
+    isAdminAuthenticated,
+    recentSearches,
+    searchQuery,
+  ]);
 
   const suggestionsDisabledByScope = !searchFilters.searchInTags && !searchFilters.searchInTitle;
   const keyboardOptions = useMemo<SearchKeyboardOption[]>(() => {
@@ -684,9 +708,12 @@ export function SearchBar({
     searchQuery,
   ]);
 
-  const shouldShowExtendedFilters = availableTags.length > 0 || untaggedEntryCount > 0 || availableYears.length > 0;
+  const shouldShowExtendedFilters =
+    effectiveFilterMeta.availableTags.length > 0 ||
+    effectiveFilterMeta.untaggedEntryCount > 0 ||
+    effectiveFilterMeta.availableYears.length > 0;
   const availableMonthsForYear = searchFilters.selectedYear
-    ? availableMonthsByYear[searchFilters.selectedYear] || []
+    ? effectiveFilterMeta.availableMonthsByYear[searchFilters.selectedYear] || []
     : [];
 
   const resetSearch = () => {
@@ -1008,13 +1035,13 @@ export function SearchBar({
                   icon={<Tag className="h-4 w-4" />}
                   isMobile={isMobile}
                   value={searchFilters.selectedTag}
-                  options={[
-                    { value: '', label: '所有标签' },
-                    { value: '__no_tags__', label: `无标签 (${untaggedEntryCount})` },
-                    ...availableTags.map((tag) => ({ value: tag, label: `#${tag}` })),
-                  ]}
-                  onChange={(value) => setSearchFilters((prev) => ({ ...prev, selectedTag: value }))}
-                />
+                    options={[
+                      { value: '', label: '所有标签' },
+                      { value: '__no_tags__', label: `无标签 (${effectiveFilterMeta.untaggedEntryCount})` },
+                      ...effectiveFilterMeta.availableTags.map((tag) => ({ value: tag, label: `#${tag}` })),
+                    ]}
+                    onChange={(value) => setSearchFilters((prev) => ({ ...prev, selectedTag: value }))}
+                  />
 
                 <SearchFilterSelect
                   controlStyle={controlStyle}
@@ -1024,7 +1051,7 @@ export function SearchBar({
                   value={searchFilters.selectedYear}
                   options={[
                     { value: '', label: '所有年份' },
-                    ...availableYears.map((year) => ({ value: year, label: `${year}年` })),
+                    ...effectiveFilterMeta.availableYears.map((year) => ({ value: year, label: `${year}年` })),
                   ]}
                   onChange={(value) =>
                     setSearchFilters((prev) => ({
