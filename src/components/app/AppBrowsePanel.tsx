@@ -220,43 +220,43 @@ export function AppBrowsePanel({
             </p>
           </div>
 
-          {isAdminAuthenticated && (
-            <div className={isMobile ? 'space-y-3' : 'space-y-4'}>
-              <Suspense fallback={suspenseFallback}>
-                <SearchBar
-                  entries={entries}
-                  availableTags={filterMeta.availableTags}
-                  availableYears={filterMeta.availableYears}
-                  availableMonthsByYear={filterMeta.availableMonthsByYear}
-                  untaggedEntryCount={filterMeta.untaggedEntryCount}
-                  onSearchResults={onSearchResults}
-                  onClearSearch={onClearSearch}
-                  onSearchPendingChange={onSearchPendingChange}
-                  onSearchQueryChange={onSearchQueryChange}
-                  onSearchSummaryChange={onSearchSummaryChange}
-                  clearRequest={searchClearRequest}
-                  resetSignal={searchResetSignal}
-                />
-              </Suspense>
+          <div className={isMobile ? 'space-y-3' : 'space-y-4'}>
+            <Suspense fallback={suspenseFallback}>
+              <SearchBar
+                entries={entries}
+                isAdminAuthenticated={isAdminAuthenticated}
+                availableTags={filterMeta.availableTags}
+                availableYears={filterMeta.availableYears}
+                availableMonthsByYear={filterMeta.availableMonthsByYear}
+                untaggedEntryCount={filterMeta.untaggedEntryCount}
+                onSearchResults={onSearchResults}
+                onClearSearch={onClearSearch}
+                onSearchPendingChange={onSearchPendingChange}
+                onSearchQueryChange={onSearchQueryChange}
+                onSearchSummaryChange={onSearchSummaryChange}
+                clearRequest={searchClearRequest}
+                resetSignal={searchResetSignal}
+              />
+            </Suspense>
 
-              <Suspense fallback={null}>
-                <QuickFilters
-                  entries={entries}
-                  enabled={interfaceSettings.quickFilters.enabled}
-                  availableTags={filterMeta.availableTags}
-                  availableYears={filterMeta.availableYears}
-                  availableMonths={filterMeta.availableMonths}
-                  availableMonthsByYear={filterMeta.availableMonthsByYear}
-                  untaggedEntryCount={filterMeta.untaggedEntryCount}
-                  onFilterResults={onQuickFilterResults}
-                  onClearFilter={onClearQuickFilters}
-                  onFilterSummaryChange={onQuickFilterSummaryChange}
-                  clearRequest={quickFilterClearRequest}
-                  resetSignal={quickFilterResetSignal}
-                />
-              </Suspense>
-            </div>
-          )}
+            <Suspense fallback={null}>
+              <QuickFilters
+                entries={entries}
+                enabled={interfaceSettings.quickFilters.enabled}
+                isAdminAuthenticated={isAdminAuthenticated}
+                availableTags={filterMeta.availableTags}
+                availableYears={filterMeta.availableYears}
+                availableMonths={filterMeta.availableMonths}
+                availableMonthsByYear={filterMeta.availableMonthsByYear}
+                untaggedEntryCount={filterMeta.untaggedEntryCount}
+                onFilterResults={onQuickFilterResults}
+                onClearFilter={onClearQuickFilters}
+                onFilterSummaryChange={onQuickFilterSummaryChange}
+                clearRequest={quickFilterClearRequest}
+                resetSignal={quickFilterResetSignal}
+              />
+            </Suspense>
+          </div>
         </div>
 
         <aside className={isMobile ? 'space-y-3' : 'space-y-4'}>

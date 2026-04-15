@@ -1,13 +1,13 @@
 import { useDeferredValue, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from 'react';
 import { Calendar, Filter, Search, Tag, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
-import { useAdminAuth } from './AdminAuthContext';
 import type { DiaryEntry } from '../types/index.ts';
 import { normalizeTimeString } from '../utils/timeUtils.ts';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 interface SearchBarProps {
   entries: DiaryEntry[];
+  isAdminAuthenticated: boolean;
   availableTags: string[];
   availableYears: string[];
   availableMonthsByYear: Record<string, string[]>;
@@ -322,6 +322,7 @@ function getSearchSummaryItems(query: string, filters: SearchFilters) {
 
 export function SearchBar({
   entries,
+  isAdminAuthenticated,
   availableTags,
   availableYears,
   availableMonthsByYear,
@@ -335,7 +336,6 @@ export function SearchBar({
   resetSignal = 0,
 }: SearchBarProps) {
   const { theme } = useThemeContext();
-  const { isAdminAuthenticated } = useAdminAuth();
   const isMobile = useIsMobile();
   const [searchQuery, setSearchQuery] = useState('');
   const [showFilters, setShowFilters] = useState(false);
@@ -596,6 +596,10 @@ export function SearchBar({
       }
 
       const results = deferredEntries.filter((entry) => {
+        if (!isAdminAuthenticated && entry.hidden) {
+          return false;
+        }
+
         let matchesText = !query;
 
         if (query) {
@@ -668,11 +672,17 @@ export function SearchBar({
     return () => {
       window.clearTimeout(timeoutId);
     };
-  }, [deferredEntries, deferredSearchFilters, deferredSearchQuery, onClearSearch, onSearchPendingChange, onSearchResults, searchFilters, searchQuery]);
-
-  if (!isAdminAuthenticated) {
-    return null;
-  }
+  }, [
+    deferredEntries,
+    deferredSearchFilters,
+    deferredSearchQuery,
+    isAdminAuthenticated,
+    onClearSearch,
+    onSearchPendingChange,
+    onSearchResults,
+    searchFilters,
+    searchQuery,
+  ]);
 
   const shouldShowExtendedFilters = availableTags.length > 0 || untaggedEntryCount > 0 || availableYears.length > 0;
   const availableMonthsForYear = searchFilters.selectedYear

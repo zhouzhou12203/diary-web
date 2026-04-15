@@ -1,7 +1,6 @@
 import { useDeferredValue, useEffect, useRef, useState } from 'react';
 import { Tag, Calendar, X } from 'lucide-react';
 import { useThemeContext } from './ThemeProvider';
-import { useAdminAuth } from './AdminAuthContext';
 import { useIsMobile } from '../hooks/useIsMobile';
 import type { DiaryEntry } from '../types/index.ts';
 import { ActiveFilterChip, QuickFilterDropdown } from './filters/QuickFilterControls';
@@ -10,6 +9,7 @@ import { normalizeTimeString } from '../utils/timeUtils.ts';
 interface QuickFiltersProps {
   entries: DiaryEntry[];
   enabled?: boolean;
+  isAdminAuthenticated: boolean;
   availableTags: string[];
   availableYears: string[];
   availableMonths: string[];
@@ -25,6 +25,7 @@ interface QuickFiltersProps {
 export function QuickFilters({
   entries,
   enabled = true,
+  isAdminAuthenticated,
   availableTags,
   availableYears,
   availableMonths,
@@ -37,7 +38,6 @@ export function QuickFilters({
   resetSignal = 0,
 }: QuickFiltersProps) {
   const { theme } = useThemeContext();
-  const { isAdminAuthenticated } = useAdminAuth();
   const isMobile = useIsMobile();
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [selectedYear, setSelectedYear] = useState('');
@@ -71,6 +71,10 @@ export function QuickFilters({
     }
 
     const results = deferredEntries.filter(entry => {
+      if (!isAdminAuthenticated && entry.hidden) {
+        return false;
+      }
+
       // 标签过滤（多标签支持）
       if (tags.length > 0) {
         let tagMatched = false;
@@ -122,7 +126,7 @@ export function QuickFilters({
   // 监听过滤条件变化
   useEffect(() => {
     performFilter(selectedTags, selectedYear, selectedMonth);
-  }, [deferredEntries, selectedMonth, selectedTags, selectedYear]);
+  }, [deferredEntries, isAdminAuthenticated, selectedMonth, selectedTags, selectedYear]);
 
   useEffect(() => {
     const items = [
@@ -190,7 +194,7 @@ export function QuickFilters({
   };
 
   // 只有管理员认证后且设置启用时才显示
-  if (!isAdminAuthenticated || !enabled) {
+  if (!enabled) {
     return null;
   }
 
