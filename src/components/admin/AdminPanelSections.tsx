@@ -1,6 +1,7 @@
 import type { ChangeEvent } from 'react';
 import { InlineActionInput, PanelSurface } from './AdminPanelParts';
 import type { ThemeConfig } from '../../hooks/useTheme';
+import type { AdminAccessProfile } from '../../services/apiTypes.ts';
 import type {
   AdminSettings,
   AdminInterfaceSettings,
@@ -33,6 +34,7 @@ interface PrimaryActionsSectionProps {
   theme: ThemeConfig;
   syncDescription: string;
   isSyncingToRemote: boolean;
+  showAdminPasswordAction: boolean;
   onSyncToRemote: () => void;
   onExportEntries: () => void;
   onImportEntries: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -45,12 +47,19 @@ interface PrimaryActionsSectionProps {
 interface SyncSettingsSectionProps {
   theme: ThemeConfig;
   getTextColor: AdminTextColorGetter;
+  accessProfile: AdminAccessProfile | null;
   remoteSyncBaseUrl: string;
   remoteSyncToken: string;
-  isSyncingToRemote: boolean;
+  remoteAdminPassword: string;
+  showRemoteBindingForm: boolean;
+  isBindingRemote: boolean;
   onRemoteSyncBaseUrlChange: (value: string) => void;
   onRemoteSyncTokenChange: (value: string) => void;
-  onSaveRemoteSyncConfig: () => void;
+  onRemoteAdminPasswordChange: (value: string) => void;
+  onShowRemoteBindingForm: () => void;
+  onHideRemoteBindingForm: () => void;
+  onBindRemoteSubmit: () => void;
+  onUnbindRemote: () => void;
 }
 
 interface AppSecuritySectionProps {
@@ -92,6 +101,21 @@ interface PasswordInputPanelProps {
   onSubmit: () => void;
 }
 
+interface RemoteBindingFormProps {
+  theme: ThemeConfig;
+  getTextColor: AdminTextColorGetter;
+  remoteBound: boolean;
+  remoteSyncBaseUrl: string;
+  remoteSyncToken: string;
+  remoteAdminPassword: string;
+  isBindingRemote: boolean;
+  onRemoteSyncBaseUrlChange: (value: string) => void;
+  onRemoteSyncTokenChange: (value: string) => void;
+  onRemoteAdminPasswordChange: (value: string) => void;
+  onSubmit: () => void;
+  onCancel?: () => void;
+}
+
 function SettingsActionCard({
   title,
   description,
@@ -100,8 +124,9 @@ function SettingsActionCard({
   children,
   asLabel = false,
 }: SettingsActionCardProps) {
+  const baseClassName = 'flex flex-col items-start gap-3 rounded-lg border p-4 text-left transition-colors hover:bg-opacity-80 sm:flex-row sm:items-center';
   const commonProps = {
-    className: 'flex items-center gap-3 p-4 rounded-lg border transition-colors hover:bg-opacity-80',
+    className: baseClassName,
     style: {
       backgroundColor: theme.colors.surface,
       borderColor: theme.colors.border,
@@ -112,7 +137,7 @@ function SettingsActionCard({
   if (asLabel) {
     return (
       <label {...commonProps} style={{ ...commonProps.style, cursor: 'pointer' }}>
-        <div className="text-left">
+        <div className="flex-1 text-left">
           <div className="font-medium">{title}</div>
           <div className="text-sm" style={{ color: theme.colors.textSecondary }}>
             {description}
@@ -125,7 +150,7 @@ function SettingsActionCard({
 
   return (
     <button type="button" onClick={onClick} {...commonProps}>
-      <div className="text-left">
+      <div className="flex-1 text-left">
         <div className="font-medium">{title}</div>
         <div className="text-sm" style={{ color: theme.colors.textSecondary }}>
           {description}
@@ -196,51 +221,212 @@ function PasswordInputPanel({
   );
 }
 
+function BindingStateBadge({
+  theme,
+  remoteBound,
+}: {
+  theme: ThemeConfig;
+  remoteBound: boolean;
+}) {
+  return (
+    <span
+      className="inline-flex rounded-full px-2.5 py-1 text-xs font-medium"
+      style={{
+        backgroundColor: remoteBound ? 'rgba(34, 197, 94, 0.14)' : 'rgba(148, 163, 184, 0.14)',
+        color: remoteBound ? '#16a34a' : theme.colors.textSecondary,
+      }}
+    >
+      {remoteBound ? '已绑定远程' : '未绑定远程'}
+    </span>
+  );
+}
+
+function RemoteBindingForm({
+  theme,
+  getTextColor,
+  remoteBound,
+  remoteSyncBaseUrl,
+  remoteSyncToken,
+  remoteAdminPassword,
+  isBindingRemote,
+  onRemoteSyncBaseUrlChange,
+  onRemoteSyncTokenChange,
+  onRemoteAdminPasswordChange,
+  onSubmit,
+  onCancel,
+}: RemoteBindingFormProps) {
+  const submitLabel = isBindingRemote
+    ? (remoteBound ? '重新绑定中' : '绑定中')
+    : (remoteBound ? '重新绑定并登录' : '绑定并登录');
+
+  return (
+    <div className="space-y-3 rounded-xl border p-4" style={{ borderColor: theme.colors.border }}>
+      <div>
+        <h4 className="font-medium" style={{ color: getTextColor('primary') }}>
+          {remoteBound ? '重新绑定远程' : '绑定远程'}
+        </h4>
+        <p className="mt-1 text-sm" style={{ color: getTextColor('secondary') }}>
+          绑定会校验线上地址、同步令牌和远程管理员密码。完成后，本机管理员登录将改为使用与远程一致的管理员密码。
+        </p>
+      </div>
+
+      <div className="space-y-3">
+        <input
+          type="url"
+          value={remoteSyncBaseUrl}
+          onChange={(event) => onRemoteSyncBaseUrlChange(event.target.value)}
+          placeholder="https://你的-pages-域名.pages.dev"
+          className="w-full rounded-lg border px-3 py-2"
+          style={{
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+            color: theme.colors.text,
+          }}
+        />
+        <input
+          type="password"
+          value={remoteSyncToken}
+          onChange={(event) => onRemoteSyncTokenChange(event.target.value)}
+          placeholder="输入线上同步令牌"
+          className="w-full rounded-lg border px-3 py-2"
+          style={{
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+            color: theme.colors.text,
+          }}
+        />
+        <input
+          type="password"
+          value={remoteAdminPassword}
+          onChange={(event) => onRemoteAdminPasswordChange(event.target.value)}
+          placeholder="输入远程管理员密码"
+          className="w-full rounded-lg border px-3 py-2"
+          style={{
+            backgroundColor: theme.colors.surface,
+            borderColor: theme.colors.border,
+            color: theme.colors.text,
+          }}
+        />
+      </div>
+
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="w-full rounded-lg px-4 py-2 font-medium text-white sm:w-auto"
+          style={{ backgroundColor: theme.colors.primary }}
+        >
+          {submitLabel}
+        </button>
+        {onCancel && (
+          <button
+            type="button"
+            onClick={onCancel}
+            className="w-full rounded-lg border px-4 py-2 font-medium sm:w-auto"
+            style={{
+              borderColor: theme.colors.border,
+              color: getTextColor('primary'),
+            }}
+          >
+            取消
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function SyncSettingsSection({
   theme,
   getTextColor,
+  accessProfile,
   remoteSyncBaseUrl,
   remoteSyncToken,
-  isSyncingToRemote,
+  remoteAdminPassword,
+  showRemoteBindingForm,
+  isBindingRemote,
   onRemoteSyncBaseUrlChange,
   onRemoteSyncTokenChange,
-  onSaveRemoteSyncConfig,
+  onRemoteAdminPasswordChange,
+  onShowRemoteBindingForm,
+  onHideRemoteBindingForm,
+  onBindRemoteSubmit,
+  onUnbindRemote,
 }: SyncSettingsSectionProps) {
+  if (accessProfile?.mode !== 'local') {
+    return null;
+  }
+
+  const remoteBound = accessProfile.remoteBound;
+  const boundAddress = accessProfile.remoteSyncBaseUrl.trim();
+
   return (
     <PanelSurface theme={theme}>
       <div className="space-y-4">
-        <div>
-          <h3 className="text-lg font-semibold" style={{ color: getTextColor('primary') }}>
-            APK 同步设置
-          </h3>
-          <p className="mt-1 text-sm" style={{ color: getTextColor('secondary') }}>
-            这里填写线上 Pages 地址和同步令牌。仅手动同步时联网，本地写作和浏览仍使用设备内数据。
-          </p>
+        <div className="space-y-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold" style={{ color: getTextColor('primary') }}>
+                APK 远程绑定
+              </h3>
+              <p className="mt-1 text-sm" style={{ color: getTextColor('secondary') }}>
+                绑定后，本机管理员入口会改为使用远程管理员密码；同步仍只在你手动触发时联网执行。
+              </p>
+            </div>
+            <BindingStateBadge theme={theme} remoteBound={remoteBound} />
+          </div>
+
+          {boundAddress ? (
+            <p className="text-sm" style={{ color: getTextColor('secondary') }}>
+              当前远程：{boundAddress}
+            </p>
+          ) : (
+            <p className="text-sm" style={{ color: getTextColor('secondary') }}>
+              当前尚未填写远程地址。未绑定时，本机管理员面板保持免密进入。
+            </p>
+          )}
         </div>
 
-        <div className="space-y-3">
-          <input
-            type="url"
-            value={remoteSyncBaseUrl}
-            onChange={(event) => onRemoteSyncBaseUrlChange(event.target.value)}
-            placeholder="https://你的-pages-域名.pages.dev"
-            className="w-full rounded border px-3 py-2"
-            style={{
-              backgroundColor: theme.colors.surface,
-              borderColor: theme.colors.border,
-              color: theme.colors.text,
-            }}
-          />
-          <InlineActionInput
+        {showRemoteBindingForm ? (
+          <RemoteBindingForm
             theme={theme}
-            type="password"
-            value={remoteSyncToken}
-            placeholder="输入线上同步令牌"
-            buttonLabel={isSyncingToRemote ? '同步中' : '保存同步配置'}
-            onValueChange={onRemoteSyncTokenChange}
-            onSubmit={onSaveRemoteSyncConfig}
+            getTextColor={getTextColor}
+            remoteBound={remoteBound}
+            remoteSyncBaseUrl={remoteSyncBaseUrl}
+            remoteSyncToken={remoteSyncToken}
+            remoteAdminPassword={remoteAdminPassword}
+            isBindingRemote={isBindingRemote}
+            onRemoteSyncBaseUrlChange={onRemoteSyncBaseUrlChange}
+            onRemoteSyncTokenChange={onRemoteSyncTokenChange}
+            onRemoteAdminPasswordChange={onRemoteAdminPasswordChange}
+            onSubmit={onBindRemoteSubmit}
+            onCancel={onHideRemoteBindingForm}
           />
-        </div>
+        ) : (
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={onShowRemoteBindingForm}
+              className="w-full rounded-lg px-4 py-2 font-medium text-white sm:w-auto"
+              style={{ backgroundColor: theme.colors.primary }}
+            >
+              {remoteBound ? '重新绑定远程' : '开始远程绑定'}
+            </button>
+            {remoteBound && (
+              <button
+                type="button"
+                onClick={onUnbindRemote}
+                className="w-full rounded-lg border px-4 py-2 font-medium sm:w-auto"
+                style={{
+                  borderColor: theme.colors.border,
+                  color: getTextColor('primary'),
+                }}
+              >
+                解除远程绑定
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </PanelSurface>
   );
@@ -251,6 +437,7 @@ export function PrimaryActionsSection({
   theme,
   syncDescription,
   isSyncingToRemote,
+  showAdminPasswordAction,
   onSyncToRemote,
   onExportEntries,
   onImportEntries,
@@ -287,12 +474,6 @@ export function PrimaryActionsSection({
       ),
     },
     {
-      key: 'password',
-      title: '密码设置',
-      description: '修改管理密码',
-      onClick: onTogglePasswordSettings,
-    },
-    {
       key: 'r2-self-check',
       title: 'R2 自检',
       description: '检查绑定、写入、读取与删除',
@@ -311,6 +492,15 @@ export function PrimaryActionsSection({
       onClick: onToggleWelcomePage,
     },
   ];
+
+  if (showAdminPasswordAction) {
+    actionCards.splice(3, 0, {
+      key: 'password',
+      title: '密码设置',
+      description: '修改管理密码',
+      onClick: onTogglePasswordSettings,
+    });
+  }
 
   return (
     <SettingsActionGrid

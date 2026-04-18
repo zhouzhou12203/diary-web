@@ -7,6 +7,15 @@ on:
       - 'android-*'
       - 'master-local-apk-*'
   workflow_dispatch:
+    inputs:
+      build_variant:
+        description: 'APK variant to build'
+        required: true
+        default: 'release'
+        type: choice
+        options:
+          - release
+          - debug
 
 jobs:
   build-android:
@@ -14,6 +23,8 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      BUILD_VARIANT: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build_variant || 'release' }}
 
     steps:
       - name: Checkout
@@ -37,11 +48,21 @@ jobs:
         run: npm ci
 
       - name: Sync Android project
-        run: npm run android:sync
+        run: |
+          if [ "${BUILD_VARIANT}" = "debug" ]; then
+            npm run android:sync:debug
+          else
+            npm run android:sync:release
+          fi
 
-      - name: Build debug APK
+      - name: Build APK
         working-directory: android
-        run: ./gradlew assembleDebug
+        run: |
+          if [ "${BUILD_VARIANT}" = "debug" ]; then
+            ./gradlew assembleDebug
+          else
+            ./gradlew assembleRelease
+          fi
 
       - name: Prepare APK asset
         id: apk
@@ -52,8 +73,14 @@ jobs:
             RELEASE_KEY="${GITHUB_SHA::7}"
           fi
 
-          APK_NAME="diary-web-${RELEASE_KEY}-debug.apk"
-          APK_SOURCE="android/app/build/outputs/apk/debug/app-debug.apk"
+          APK_NAME="diary-web-${RELEASE_KEY}-${BUILD_VARIANT}.apk"
+
+          if [ "${BUILD_VARIANT}" = "debug" ]; then
+            APK_SOURCE="android/app/build/outputs/apk/debug/app-debug.apk"
+          else
+            APK_SOURCE="android/app/build/outputs/apk/release/app-release.apk"
+          fi
+
           APK_TARGET="${RUNNER_TEMP}/${APK_NAME}"
 
           cp "${APK_SOURCE}" "${APK_TARGET}"
@@ -61,7 +88,7 @@ jobs:
           echo "apk_name=${APK_NAME}" >> "${GITHUB_OUTPUT}"
           echo "apk_target=${APK_TARGET}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload debug APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.apk.outputs.apk_name }}

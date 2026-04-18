@@ -134,19 +134,19 @@ export function InlineActionInput({
   onSubmit,
 }: InlineActionInputProps) {
   return (
-    <div className="flex gap-3">
+    <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
       <input
         type={type}
         value={value}
         onChange={(event) => onValueChange(event.target.value)}
         placeholder={placeholder}
-        className="flex-1 rounded border px-3 py-2"
+        className="min-w-0 flex-1 rounded border px-3 py-2"
         style={getAdminInputStyle(theme)}
       />
       <button
         type="button"
         onClick={onSubmit}
-        className="rounded px-4 py-2 font-medium"
+        className="w-full rounded px-4 py-2 font-medium sm:w-auto"
         style={{
           backgroundColor: theme.colors.primary,
           color: 'white',

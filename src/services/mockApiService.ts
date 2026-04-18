@@ -1,5 +1,11 @@
+import { Capacitor } from '@capacitor/core';
 import type { DiaryEntry, DiaryStats } from '../types/index.ts';
-import type { AdminSettingsResponse, PublicSettingsResponse, SessionState } from './apiTypes.ts';
+import type {
+  AdminAccessProfile,
+  AdminSettingsResponse,
+  PublicSettingsResponse,
+  SessionState,
+} from './apiTypes.ts';
 import { LocalDataStore } from './localDataStore.ts';
 import {
   createPublicSettingsResponse,
@@ -20,9 +26,58 @@ import {
 } from './entrySync.ts';
 
 const DEFAULT_APP_TIME_ZONE = 'Asia/Shanghai';
+const LOCAL_PASSWORD_HASH_PREFIX = 'sha256';
+const textEncoder = new TextEncoder();
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  let binary = '';
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+
+function timingSafeEqual(left: string, right: string): boolean {
+  const leftBytes = textEncoder.encode(left);
+  const rightBytes = textEncoder.encode(right);
+  let mismatch = leftBytes.length === rightBytes.length ? 0 : 1;
+  const length = Math.max(leftBytes.length, rightBytes.length);
+
+  for (let index = 0; index < length; index += 1) {
+    mismatch |= (leftBytes[index] ?? 0) ^ (rightBytes[index] ?? 0);
+  }
+
+  return mismatch === 0;
+}
+
+async function deriveLocalPasswordHash(password: string, salt: string) {
+  const payload = textEncoder.encode(`${salt}:${password}`);
+  const digest = await crypto.subtle.digest('SHA-256', payload);
+  return toBase64Url(new Uint8Array(digest));
+}
+
+async function createLocalPasswordHash(password: string) {
+  const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+  const salt = Array.from(saltBytes, (value) => value.toString(16).padStart(2, '0')).join('');
+  const hash = await deriveLocalPasswordHash(password, salt);
+  return `${LOCAL_PASSWORD_HASH_PREFIX}$${salt}$${hash}`;
+}
+
+async function verifyLocalPasswordHash(storedHash: string, candidate: string) {
+  const [prefix, salt, expectedHash] = storedHash.split('$');
+
+  if (prefix !== LOCAL_PASSWORD_HASH_PREFIX || !salt || !expectedHash) {
+    return false;
+  }
+
+  const actualHash = await deriveLocalPasswordHash(candidate, salt);
+  return timingSafeEqual(actualHash, expectedHash);
 }
 
 function formatDateKey(date: Date, timeZone: string): string {
@@ -78,6 +133,14 @@ export class MockApiService {
     disableDefaults: 'diary_disable_defaults',
   });
 
+  private isNativeAppRuntime() {
+    if (typeof window === 'undefined') {
+      return false;
+    }
+
+    return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
+  }
+
   private async getStoredEntries(): Promise<DiaryEntry[]> {
     const storedEntries = await this.localDataStore.getEntries(() => this.getDefaultEntries());
     const normalizedEntries = storedEntries.map(normalizeDiaryEntry);
@@ -94,7 +157,29 @@ export class MockApiService {
   }
 
   private async getStoredSettings(): Promise<Record<string, string>> {
-    return this.localDataStore.getSettings(() => this.getDefaultSettings());
+    const settings = await this.localDataStore.getSettings(() => this.getDefaultSettings());
+
+    if (settings.remote_sync_admin_password) {
+      delete settings.remote_sync_admin_password;
+      await this.saveSettings(settings);
+    }
+
+    if (this.isNativeAppRuntime()) {
+      const remoteBound = this.getRemoteBoundState(settings);
+      const configuredAdminPassword = this.getConfiguredLocalAdminPassword(settings);
+
+      if (!remoteBound && configuredAdminPassword) {
+        delete settings.admin_password;
+        await this.saveSettings(settings);
+
+        const session = await this.localDataStore.getSession();
+        if (session.isAdminAuthenticated) {
+          await this.localDataStore.clearSession();
+        }
+      }
+    }
+
+    return settings;
   }
 
   private async saveSettings(settings: Record<string, string>): Promise<void> {
@@ -108,6 +193,7 @@ export class MockApiService {
   }
 
   private async getSessionState(): Promise<SessionState> {
+    await this.getStoredSettings();
     return this.localDataStore.getSession();
   }
 
@@ -170,6 +256,32 @@ export class MockApiService {
     return trimmedValue;
   }
 
+  private getRemoteBoundState(settings: Record<string, string>) {
+    return Boolean(settings.remote_admin_password_hash?.trim());
+  }
+
+  private getConfiguredLocalAdminPassword(settings: Record<string, string>) {
+    return settings.admin_password?.trim() ?? '';
+  }
+
+  private async verifyConfiguredAdminPassword(settings: Record<string, string>, password: string) {
+    const normalizedPassword = password.trim();
+    const remoteAdminHash = settings.remote_admin_password_hash?.trim();
+
+    if (remoteAdminHash) {
+      return normalizedPassword
+        ? verifyLocalPasswordHash(remoteAdminHash, normalizedPassword)
+        : false;
+    }
+
+    const configuredAdminPassword = this.getConfiguredLocalAdminPassword(settings);
+    if (configuredAdminPassword) {
+      return timingSafeEqual(configuredAdminPassword, normalizedPassword);
+    }
+
+    return true;
+  }
+
   private getDefaultEntries(): DiaryEntry[] {
     return [
       {
@@ -228,7 +340,7 @@ export class MockApiService {
 
   private getDefaultSettings(): Record<string, string> {
     return {
-      admin_password: 'admin123',
+      admin_password: this.isNativeAppRuntime() ? '' : 'admin123',
       app_password_enabled: 'false',
       app_password: 'diary123',
       login_background_enabled: 'false',
@@ -473,10 +585,12 @@ export class MockApiService {
   async getSetting(key: string): Promise<string | null> {
     return this.runMockRequest(50, async () => {
       const settings = await this.getStoredSettings();
+      const remoteBound = this.getRemoteBoundState(settings);
+      const configuredAdminPassword = this.getConfiguredLocalAdminPassword(settings);
 
       if (key === 'admin_password_configured') {
         await this.requireAdminSession();
-        return settings.admin_password ? 'true' : 'false';
+        return remoteBound || Boolean(configuredAdminPassword) ? 'true' : 'false';
       }
 
       if (key === 'app_password_configured') {
@@ -495,7 +609,17 @@ export class MockApiService {
 
   async setSetting(key: string, value: string): Promise<void> {
     return this.runMockRequest(50, async () => {
+      const settings = await this.getStoredSettings();
+
       if (key === 'admin_password') {
+        if (this.getRemoteBoundState(settings)) {
+          throw new Error('当前已绑定远程，请先在线上修改管理员密码后再重新绑定');
+        }
+
+        if (this.isNativeAppRuntime()) {
+          throw new Error('APK 本地管理员口令默认为免密，请使用远程绑定来对齐管理员密码');
+        }
+
         const trimmedValue = this.validatePasswordLength(value, '管理员密码');
         await this.updateStoredSettings((settings) => {
           settings.admin_password = trimmedValue;
@@ -546,7 +670,8 @@ export class MockApiService {
         throw new Error('访问密码错误');
       }
 
-      if (password !== settings.admin_password) {
+      const verified = await this.verifyConfiguredAdminPassword(settings, password);
+      if (!verified) {
         throw new Error('管理员密码错误');
       }
 
@@ -577,14 +702,34 @@ export class MockApiService {
     return this.runMockRequest(50, async () => {
       const settings = await this.getStoredSettings();
       const publicSettings = createPublicSettingsResponse(settings);
+      const remoteBound = this.getRemoteBoundState(settings);
+      const configuredAdminPassword = this.getConfiguredLocalAdminPassword(settings);
 
       return {
         ...publicSettings,
-        adminPasswordConfigured: Boolean(settings.admin_password),
+        adminPasswordConfigured: remoteBound || Boolean(configuredAdminPassword),
         appPasswordConfigured: Boolean(settings.app_password),
         syncAccessTokenConfigured: Boolean(settings.sync_access_token),
       };
     }, { requireAdmin: true });
+  }
+
+  async getAdminAccessProfile(): Promise<AdminAccessProfile> {
+    return this.runMockRequest(30, async () => {
+      const settings = await this.getStoredSettings();
+      const remoteBound = this.getRemoteBoundState(settings);
+      const configuredAdminPassword = this.getConfiguredLocalAdminPassword(settings);
+      const remoteSyncBaseUrl = settings.remote_sync_base_url?.trim() ?? '';
+      const remoteSyncToken = settings.remote_sync_token?.trim() ?? '';
+
+      return {
+        mode: 'local',
+        requiresPassword: remoteBound || Boolean(configuredAdminPassword),
+        remoteBound,
+        remoteSyncConfigured: Boolean(remoteSyncBaseUrl && remoteSyncToken),
+        remoteSyncBaseUrl,
+      };
+    });
   }
 
   async getStats(apiKey?: string): Promise<DiaryStats> {
@@ -652,10 +797,6 @@ export class MockApiService {
   async getRemoteSyncConfig(): Promise<{ baseUrl: string; syncToken: string }> {
     return this.runMockRequest(30, async () => {
       const settings = await this.getStoredSettings();
-      if (settings.remote_sync_admin_password) {
-        delete settings.remote_sync_admin_password;
-        await this.saveSettings(settings);
-      }
       return {
         baseUrl: settings.remote_sync_base_url ?? '',
         syncToken: settings.remote_sync_token ?? '',
@@ -663,13 +804,51 @@ export class MockApiService {
     }, { requireAdmin: true });
   }
 
+  async getRemoteBindingDefaults(): Promise<{ baseUrl: string; syncToken: string }> {
+    return this.runMockRequest(30, async () => {
+      const settings = await this.getStoredSettings();
+      return {
+        baseUrl: settings.remote_sync_base_url ?? '',
+        syncToken: settings.remote_sync_token ?? '',
+      };
+    });
+  }
+
   async saveRemoteSyncConfig(config: { baseUrl: string; syncToken: string }): Promise<void> {
     return this.runMockRequest(30, async () => {
       await this.updateStoredSettings((settings) => {
         settings.remote_sync_base_url = config.baseUrl.trim();
         settings.remote_sync_token = config.syncToken;
-        delete settings.remote_sync_admin_password;
       });
     }, { requireAdmin: true });
+  }
+
+  async bindRemoteAdmin(config: { baseUrl: string; syncToken: string; adminPassword: string }): Promise<void> {
+    const trimmedPassword = this.validatePasswordLength(config.adminPassword, '管理员密码');
+
+    return this.runMockRequest(60, async () => {
+      const passwordHash = await createLocalPasswordHash(trimmedPassword);
+
+      await this.updateStoredSettings((settings) => {
+        settings.remote_sync_base_url = config.baseUrl.trim();
+        settings.remote_sync_token = config.syncToken.trim();
+        settings.remote_admin_password_hash = passwordHash;
+        delete settings.admin_password;
+      });
+    });
+  }
+
+  async unbindRemoteAdmin(): Promise<void> {
+    return this.runMockRequest(30, async () => {
+      await this.updateStoredSettings((settings) => {
+        delete settings.remote_admin_password_hash;
+        delete settings.remote_sync_base_url;
+        delete settings.remote_sync_token;
+
+        if (this.isNativeAppRuntime()) {
+          delete settings.admin_password;
+        }
+      });
+    });
   }
 }

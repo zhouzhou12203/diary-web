@@ -7,8 +7,9 @@
 
 - Android 原生应用默认进入本地离线数据模式。
 - 本地模式下，日记数据、公开设置和登录状态保存在设备本地，可在无网络环境下使用。
-- 如需读取 Cloudflare Pages / Functions 的远程数据，可在应用内“设备与离线”卡片中切换到 `远程 Pages` 模式。
-- 当前版本还没有自动双向同步；本地数据与远程数据是两套独立存储。后续如需同步，建议在现有模式切换基础上补充显式同步流程，而不是静默自动合并。
+- 正式 APK 默认锁定本地模式，不再暴露“远程 Pages”模式切换。
+- 如需联动云端，正式 APK 通过管理员面板里的远程绑定 + 手动同步完成，不走静默自动切换。
+- 调试 APK 默认保留数据模式切换，便于本机联调远程 Pages / Functions。
 
 ## 推荐发布方式：GitHub Actions
 
@@ -28,15 +29,17 @@ git push origin apk-20260418-master
 4. 工作流会自动：
    - 安装 Node.js 和 Java 21
    - 执行 `npm ci`
-   - 执行 `npm run android:sync`
-   - 执行 `./gradlew assembleDebug`
+   - 默认执行 `npm run android:sync:release`
+   - 默认执行 `./gradlew assembleRelease`
    - 上传 APK artifact
    - 自动创建或更新同名 GitHub Release，并把 APK 挂到 Release 资产
 
 ### 手动触发
 
 - 也可以在 GitHub Actions 页面手动运行 `Build And Release Android APK`
-- 手动触发时会生成 artifact，但不会自动创建 GitHub Release
+- 手动触发时可以选择 `release` 或 `debug`
+- `debug` 适合联调，会保留数据模式切换
+- 手动触发仍只生成 artifact，不会自动创建 GitHub Release
 
 ## 本地构建
 
@@ -51,7 +54,7 @@ git push origin apk-20260418-master
 
 ```bash
 npm install
-npm run android:sync
+npm run android:sync:release
 ```
 
 如果仓库中还没有 Android 工程，可执行：
@@ -65,7 +68,7 @@ npx cap add android
 同步 Web 资源到 Android 工程：
 
 ```bash
-npm run android:sync
+npm run android:sync:debug
 ```
 
 在 Android Studio 中打开工程：
@@ -80,24 +83,23 @@ npm run android:open
 npm run android:apk:debug
 ```
 
+调试 APK 会保留 `设备与离线` 卡片中的数据模式切换，用于本机联调。
+
 生成发布 APK：
 
 ```bash
 npm run android:apk:release
 ```
 
+发布 APK 默认固定为本地模式，不显示数据模式切换。
+
 默认输出位置通常为：
 
 - `android/app/build/outputs/apk/debug/app-debug.apk`
 - `android/app/build/outputs/apk/release/app-release.apk`
 
-## 远程模式与 Pages 联动
+## 调试版远程联动
 
 - Web 端部署仍然使用 Cloudflare Pages / Functions / D1。
-- Android 端切换到 `远程 Pages` 模式后，会直接访问线上 API。
-- 如果后续要做本地与云端同步，建议新增：
-  - 显式“上传本地到云端”
-  - 显式“从云端拉取覆盖本地”
-  - 冲突检测与时间戳策略
-
-当前先保留“本地可离线使用”和“远程可连接 Pages”两条清晰路径，避免误同步导致数据覆盖。
+- 调试 APK 切换到 `远程 Pages` 模式后，会直接访问线上 API。
+- 发布 APK 不再开放模式切换，改为使用管理员面板里的远程绑定和手动同步。

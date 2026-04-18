@@ -34,10 +34,14 @@
     "db:init": "wrangler d1 execute diary-db --local --file=schema.sql",
     "dev:with-db": "npm run db:init && npm run start:remote",
     "pages:deploy": "wrangler pages deploy dist",
-    "android:sync": "npm run build && npx cap sync android",
+    "build:android:debug": "VITE_ENABLE_DATA_MODE_SWITCH=true npm run build",
+    "build:android:release": "npm run build",
+    "android:sync": "npm run android:sync:release",
+    "android:sync:debug": "npm run build:android:debug && npx cap sync android",
+    "android:sync:release": "npm run build:android:release && npx cap sync android",
     "android:open": "npx cap open android",
-    "android:apk:debug": "npm run android:sync && cd android && ./gradlew assembleDebug",
-    "android:apk:release": "npm run android:sync && cd android && ./gradlew assembleRelease"
+    "android:apk:debug": "npm run android:sync:debug && cd android && ./gradlew assembleDebug",
+    "android:apk:release": "npm run android:sync:release && cd android && ./gradlew assembleRelease"
   },
   "dependencies": {
     "@capacitor/filesystem": "^8.1.2",

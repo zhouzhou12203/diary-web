@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ReactElement } from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AdminAuthProvider } from './AdminAuthContext';
 import { AdminPanel } from './AdminPanel';
 import { ThemeProvider } from './ThemeProvider';
@@ -67,7 +67,27 @@ const sampleEntry = {
   updated_at: '2026-04-12T10:00:00.000Z',
 };
 
+async function fillAdminPassword(user: ReturnType<typeof userEvent.setup>, password: string) {
+  const input = await screen.findByPlaceholderText('输入管理员密码');
+  await user.type(input, password);
+  return input as HTMLInputElement;
+}
+
 describe('AdminPanel', () => {
+  beforeEach(() => {
+    vi.spyOn(apiService, 'getAdminAccessProfile').mockResolvedValue({
+      mode: 'remote',
+      requiresPassword: true,
+      remoteBound: false,
+      remoteSyncConfigured: false,
+      remoteSyncBaseUrl: '',
+    });
+    vi.spyOn(apiService, 'getRemoteBindingDefaults').mockResolvedValue({
+      baseUrl: '',
+      syncToken: '',
+    });
+  });
+
   afterEach(() => {
     cleanup();
     localStorage.clear();
@@ -96,7 +116,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
 
     await waitFor(() => {
@@ -125,8 +145,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    const input = screen.getByPlaceholderText('输入管理员密码') as HTMLInputElement;
-    await user.type(input, 'wrong-pass');
+    const input = await fillAdminPassword(user, 'wrong-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
 
     expect(await screen.findByText('管理员密码错误')).toBeInTheDocument();
@@ -155,7 +174,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
     expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
 
@@ -198,7 +217,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
     expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
 
@@ -234,7 +253,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
     expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
 
@@ -277,7 +296,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
     expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
 
@@ -335,7 +354,7 @@ describe('AdminPanel', () => {
       />
     );
 
-    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await fillAdminPassword(user, 'admin-pass');
     await user.click(screen.getByRole('button', { name: '验证' }));
     expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
 
@@ -361,6 +380,101 @@ describe('AdminPanel', () => {
         },
       ], { overwrite: false });
       expect(onEntriesUpdate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it('allows local devices to enter admin without a password before binding', async () => {
+    vi.spyOn(apiService, 'getAdminAccessProfile').mockResolvedValue({
+      mode: 'local',
+      requiresPassword: false,
+      remoteBound: false,
+      remoteSyncConfigured: false,
+      remoteSyncBaseUrl: '',
+    });
+    vi.spyOn(apiService, 'loginAdmin').mockResolvedValue({
+      isAuthenticated: true,
+      isAdminAuthenticated: true,
+    });
+    vi.spyOn(adminSettingsStore, 'loadAdminPanelSettings').mockResolvedValue(defaultLoadedSettings);
+    const onSessionChange = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <AdminPanel
+        isOpen={true}
+        onClose={vi.fn()}
+        entries={[]}
+        onEntriesUpdate={vi.fn()}
+        onSessionChange={onSessionChange}
+      />
+    );
+
+    await user.click(await screen.findByRole('button', { name: '直接进入本地管理' }));
+
+    await waitFor(() => {
+      expect(apiService.loginAdmin).toHaveBeenCalledWith('');
+      expect(onSessionChange).toHaveBeenCalledWith({
+        isAuthenticated: true,
+        isAdminAuthenticated: true,
+      });
+    });
+  });
+
+  it('supports rebinding remote admin credentials from the login view', async () => {
+    vi.spyOn(apiService, 'getAdminAccessProfile').mockResolvedValue({
+      mode: 'local',
+      requiresPassword: true,
+      remoteBound: true,
+      remoteSyncConfigured: true,
+      remoteSyncBaseUrl: 'https://diary.example.com',
+    });
+    vi.spyOn(apiService, 'getRemoteBindingDefaults').mockResolvedValue({
+      baseUrl: 'https://diary.example.com',
+      syncToken: 'saved-sync-token',
+    });
+    vi.spyOn(apiService, 'bindRemoteAdmin').mockResolvedValue();
+    vi.spyOn(apiService, 'getLocalSyncStatus').mockResolvedValue({
+      totalEntries: 0,
+      visibleEntries: 0,
+      pendingCreates: 0,
+      pendingUpdates: 0,
+      pendingDeletes: 0,
+      conflicts: 0,
+      totalPending: 0,
+      lastSyncedAt: null,
+    });
+    vi.spyOn(apiService, 'getRemoteSyncConfig').mockResolvedValue({
+      baseUrl: 'https://diary.example.com',
+      syncToken: 'saved-sync-token',
+    });
+    vi.spyOn(adminSettingsStore, 'loadAdminPanelSettings').mockResolvedValue(defaultLoadedSettings);
+    const onSessionChange = vi.fn();
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <AdminPanel
+        isOpen={true}
+        onClose={vi.fn()}
+        entries={[]}
+        onEntriesUpdate={vi.fn()}
+        onSessionChange={onSessionChange}
+      />
+    );
+
+    await user.click(await screen.findByRole('button', { name: '重新绑定远程' }));
+    await user.type(screen.getByPlaceholderText('输入远程管理员密码'), 'remote-admin-pass');
+    await user.click(screen.getByRole('button', { name: '重新绑定并登录' }));
+
+    await waitFor(() => {
+      expect(apiService.bindRemoteAdmin).toHaveBeenCalledWith({
+        baseUrl: 'https://diary.example.com',
+        syncToken: 'saved-sync-token',
+        adminPassword: 'remote-admin-pass',
+      });
+      expect(onSessionChange).toHaveBeenCalledWith({
+        isAuthenticated: true,
+        isAdminAuthenticated: true,
+      });
     });
   });
 });

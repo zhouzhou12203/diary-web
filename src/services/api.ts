@@ -1,5 +1,11 @@
 import type { DiaryEntry, ApiResponse, DiaryStats } from '../types/index.ts';
-import type { AdminSettingsResponse, PublicSettingsResponse, SessionState } from './apiTypes.ts';
+import type {
+  AdminAccessProfile,
+  AdminSettingsResponse,
+  PublicSettingsResponse,
+  RemoteBindingInput,
+  SessionState,
+} from './apiTypes.ts';
 import { ApiModeStore } from './apiModeStore.ts';
 import type { DiarySyncStatus } from './entrySync.ts';
 import { MockApiService } from './mockApiService.ts';
@@ -8,7 +14,7 @@ import { ApiRequestError, RemoteApiClient } from './remoteApiClient.ts';
 import { withRetry, verifyDeletion, getConsistencyErrorMessage } from '../utils/d1Utils.ts';
 import { debugWarn } from '../utils/logger.ts';
 
-function getViteEnvValue(key: 'MODE' | 'VITE_USE_MOCK_API'): string | undefined {
+function getViteEnvValue(key: 'MODE' | 'VITE_USE_MOCK_API' | 'VITE_ENABLE_DATA_MODE_SWITCH'): string | undefined {
   return import.meta.env?.[key];
 }
 
@@ -50,6 +56,13 @@ export interface RemoteSyncConfig {
   baseUrl: string;
   syncToken: string;
 }
+
+type ApiEnvelope<T> = {
+  success?: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+};
 
 const signedOutSession: SessionState = {
   isAuthenticated: false,
@@ -99,6 +112,14 @@ function normalizeRemoteSyncBaseUrl(rawBaseUrl: string): string {
   return trimmedValue.replace(/\/+$/, '');
 }
 
+async function parseApiEnvelope<T>(response: Response): Promise<ApiEnvelope<T> | null> {
+  try {
+    return await response.json() as ApiEnvelope<T>;
+  } catch {
+    return null;
+  }
+}
+
 export class ApiService {
   private readonly modeStore = new ApiModeStore();
   private mockService = new MockApiService();
@@ -126,6 +147,14 @@ export class ApiService {
 
   getApiServiceStatus(): { useMockService: boolean; reason: string } {
     return this.modeStore.getStatus(this.useMockService);
+  }
+
+  canToggleDataMode(): boolean {
+    return this.modeStore.canToggleDataMode(getViteEnvValue);
+  }
+
+  isNativeApp(): boolean {
+    return this.modeStore.isNativeApp();
   }
 
   private emitSessionChange(session: SessionState) {
@@ -485,6 +514,103 @@ export class ApiService {
     );
   }
 
+  async getAdminAccessProfile(): Promise<AdminAccessProfile> {
+    if (this.useMockService) {
+      return this.mockService.getAdminAccessProfile();
+    }
+
+    return {
+      mode: 'remote',
+      requiresPassword: true,
+      remoteBound: false,
+      remoteSyncConfigured: false,
+      remoteSyncBaseUrl: '',
+    };
+  }
+
+  private async verifyRemoteAdminPassword(apiBaseUrl: string, adminPassword: string): Promise<void> {
+    const response = await fetch(`${apiBaseUrl}/auth/login`, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        scope: 'admin',
+        password: adminPassword,
+      }),
+    });
+    const payload = await parseApiEnvelope<{ isAuthenticated: boolean; isAdminAuthenticated: boolean }>(response);
+
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || '远程管理员验证失败');
+    }
+  }
+
+  private async verifyRemoteSyncToken(apiBaseUrl: string, syncToken: string): Promise<void> {
+    const response = await fetch(`${apiBaseUrl}/sync`, {
+      method: 'POST',
+      credentials: 'omit',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Sync-Token': syncToken,
+      },
+      body: JSON.stringify({
+        entries: [],
+      }),
+    });
+    const payload = await parseApiEnvelope<{
+      entries: DiaryEntry[];
+      pushedCount: number;
+      deletedCount: number;
+      syncedAt: string;
+    }>(response);
+
+    if (!response.ok || !payload?.success) {
+      throw new Error(payload?.error || '同步令牌验证失败');
+    }
+  }
+
+  async bindRemoteAdmin(config: RemoteBindingInput): Promise<void> {
+    if (!this.useMockService) {
+      throw new Error('当前处于远程数据模式，无法执行 APK 远程绑定');
+    }
+
+    const baseUrl = normalizeRemoteSyncBaseUrl(config.baseUrl);
+    const syncToken = config.syncToken.trim();
+    const adminPassword = config.adminPassword.trim();
+
+    if (!baseUrl) {
+      throw new Error('请先填写同步地址');
+    }
+
+    if (!syncToken) {
+      throw new Error('请先填写同步令牌');
+    }
+
+    if (!adminPassword) {
+      throw new Error('请输入远程管理员密码');
+    }
+
+    const apiBaseUrl = normalizeRemoteSyncApiBaseUrl(baseUrl);
+    await this.verifyRemoteAdminPassword(apiBaseUrl, adminPassword);
+    await this.verifyRemoteSyncToken(apiBaseUrl, syncToken);
+    await this.mockService.bindRemoteAdmin({
+      baseUrl,
+      syncToken,
+      adminPassword,
+    });
+    await this.emitResolvedSession(this.mockService.login('admin', adminPassword));
+  }
+
+  async unbindRemoteAdmin(): Promise<void> {
+    if (!this.useMockService) {
+      throw new Error('当前处于远程数据模式，无法解除 APK 远程绑定');
+    }
+
+    await this.mockService.unbindRemoteAdmin();
+  }
+
   enableLocalMode(): void {
     this.useMockService = true;
     this.publicSettingsStore.clear();
@@ -546,6 +672,17 @@ export class ApiService {
 
   async getRemoteSyncConfig(): Promise<RemoteSyncConfig> {
     return this.mockService.getRemoteSyncConfig();
+  }
+
+  async getRemoteBindingDefaults(): Promise<RemoteSyncConfig> {
+    if (!this.useMockService) {
+      return {
+        baseUrl: '',
+        syncToken: '',
+      };
+    }
+
+    return this.mockService.getRemoteBindingDefaults();
   }
 
   async saveRemoteSyncConfig(config: RemoteSyncConfig): Promise<void> {

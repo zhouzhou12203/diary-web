@@ -514,6 +514,146 @@ test('remote sync config is stored locally for apk sync', async () => {
   assert.equal(config.syncToken, 'remote-sync-token');
 });
 
+test('bindRemoteAdmin verifies remote credentials and switches local admin auth to the bound remote password', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_local', 'true');
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+
+    if (url === 'https://diary.example.com/api/auth/login') {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { password?: string; scope?: string };
+      assert.equal(payload.scope, 'admin');
+      assert.equal(payload.password, 'remote-admin-pass');
+
+      return jsonResponse({
+        success: true,
+        data: {
+          isAuthenticated: true,
+          isAdminAuthenticated: true,
+        },
+      });
+    }
+
+    if (url === 'https://diary.example.com/api/sync') {
+      const payload = JSON.parse(String(init?.body ?? '{}')) as { entries?: unknown[] };
+      assert.equal(new Headers(init?.headers).get('X-Sync-Token'), 'remote-sync-token');
+      assert.deepEqual(payload.entries, []);
+
+      return jsonResponse({
+        success: true,
+        data: {
+          entries: [],
+          pushedCount: 0,
+          deletedCount: 0,
+          syncedAt: '2026-04-19T00:00:00.000Z',
+        },
+      });
+    }
+
+    throw new Error(`Unexpected fetch URL in test: ${url}`);
+  };
+
+  try {
+    const ApiService = await loadApiServiceClass();
+    const service = new ApiService();
+
+    await service.bindRemoteAdmin({
+      baseUrl: 'https://diary.example.com/',
+      syncToken: 'remote-sync-token',
+      adminPassword: 'remote-admin-pass',
+    });
+
+    let session = await service.getSession();
+    assert.equal(session.isAdminAuthenticated, true);
+
+    await service.logout();
+
+    await assert.rejects(
+      service.loginAdmin('admin123'),
+      /管理员密码错误/
+    );
+
+    session = await service.loginAdmin('remote-admin-pass');
+    assert.equal(session.isAdminAuthenticated, true);
+
+    const profile = await service.getAdminAccessProfile();
+    assert.equal(profile.mode, 'local');
+    assert.equal(profile.remoteBound, true);
+    assert.equal(profile.requiresPassword, true);
+    assert.equal(profile.remoteSyncBaseUrl, 'https://diary.example.com');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('native upgrade clears legacy local admin password and stale admin session without touching sync config', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_local', 'true');
+  localStorageMock.setItem('diary-admin-authenticated', 'true');
+  localStorageMock.setItem('diary-app-authenticated', 'true');
+  localStorageMock.setItem('diary_app_settings', JSON.stringify({
+    admin_password: 'legacy-local-pass',
+    remote_sync_base_url: 'https://diary.example.com',
+    remote_sync_token: 'saved-sync-token',
+  }));
+
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    location: {
+      protocol: 'capacitor:',
+    },
+  } as Window & typeof globalThis;
+
+  try {
+    const ApiService = await loadApiServiceClass();
+    const service = new ApiService();
+
+    const session = await service.getSession();
+    assert.deepEqual(session, {
+      isAuthenticated: false,
+      isAdminAuthenticated: false,
+    });
+
+    const profile = await service.getAdminAccessProfile();
+    assert.equal(profile.mode, 'local');
+    assert.equal(profile.remoteBound, false);
+    assert.equal(profile.requiresPassword, false);
+    assert.equal(profile.remoteSyncConfigured, true);
+    assert.equal(profile.remoteSyncBaseUrl, 'https://diary.example.com');
+
+    const storedSettings = JSON.parse(localStorageMock.getItem('diary_app_settings') ?? '{}') as Record<string, string>;
+    assert.equal(storedSettings.admin_password, undefined);
+    assert.equal(storedSettings.remote_sync_base_url, 'https://diary.example.com');
+    assert.equal(storedSettings.remote_sync_token, 'saved-sync-token');
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
+test('native release build locks data mode to local even when a legacy remote flag exists', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_remote', 'true');
+
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    location: {
+      protocol: 'capacitor:',
+    },
+  } as Window & typeof globalThis;
+
+  try {
+    const ApiService = await loadApiServiceClass();
+    const service = new ApiService();
+
+    assert.equal(service.canToggleDataMode(), false);
+    assert.equal(service.getCurrentMode(), 'local');
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
 test('syncLocalEntriesToRemote pushes pending local entries and replaces local snapshot from remote', async () => {
   localStorageMock.clear();
   localStorageMock.setItem('diary_force_local', 'true');

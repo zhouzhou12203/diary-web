@@ -108,6 +108,7 @@ function AppContent() {
   const [dataMode, setDataMode] = useState<'local' | 'remote'>(() => apiService.getCurrentMode());
   const [isSwitchingDataMode, setIsSwitchingDataMode] = useState(false);
   const [showBackToLatestButton, setShowBackToLatestButton] = useState(false);
+  const canToggleDataMode = apiService.canToggleDataMode();
 
   const enterAppTimeoutRef = useRef<number | null>(null);
   const finishTransitionTimeoutRef = useRef<number | null>(null);
@@ -299,6 +300,11 @@ function AppContent() {
   };
 
   const handleDataModeChange = async (nextMode: 'local' | 'remote') => {
+    if (!canToggleDataMode) {
+      showNotification('当前构建已固定为本地模式，如需联动云端请在管理员面板完成远程绑定并手动同步。', 'error');
+      return;
+    }
+
     if (nextMode === dataMode || isSwitchingDataMode) {
       return;
     }
@@ -516,6 +522,7 @@ function AppContent() {
                   filterMeta={filterMeta}
                   viewMode={viewMode}
                   dataMode={dataMode}
+                  canToggleDataMode={canToggleDataMode}
                   activeBrowse={activeBrowse}
                   accessibleEntriesCount={accessibleEntriesCount}
                   displayEntriesCount={displayEntries.length}

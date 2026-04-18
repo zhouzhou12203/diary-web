@@ -32,6 +32,7 @@ interface AppBrowsePanelProps {
   filterMeta: FilterMeta;
   viewMode: ViewMode;
   dataMode: 'local' | 'remote';
+  canToggleDataMode: boolean;
   activeBrowse: BrowseDescriptor;
   accessibleEntriesCount: number;
   displayEntriesCount: number;
@@ -137,6 +138,7 @@ export function AppBrowsePanel({
   filterMeta,
   viewMode,
   dataMode,
+  canToggleDataMode,
   activeBrowse,
   accessibleEntriesCount,
   displayEntriesCount,
@@ -400,44 +402,57 @@ export function AppBrowsePanel({
                   className={`inline-flex items-center gap-2 rounded-full ${isMobile ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'}`}
                   style={{ ...quietButtonStyle, color: theme.colors.text }}
                 >
-                  {dataMode === 'local' ? '本地数据可离线写作与浏览' : '远程数据可与 Pages 项目联动'}
+                  {dataMode === 'local'
+                    ? '本地数据可离线写作与浏览'
+                    : '远程数据可与 Pages 项目联动'}
                 </div>
               </div>
 
               <div className={`rounded-2xl ${isMobile ? 'space-y-2 p-2.5' : 'space-y-3 p-3'}`} style={shellSurfaceStyle}>
                 <div className={`${isMobile ? 'text-xs uppercase tracking-[0.14em]' : 'text-sm font-medium'}`} style={{ color: theme.colors.text }}>
-                  数据模式
+                  {canToggleDataMode ? '数据模式' : '数据方式'}
                 </div>
                 <div className={`${isMobile ? 'text-xs leading-5' : 'text-sm leading-6'}`} style={{ color: theme.colors.textSecondary }}>
-                  {dataMode === 'local'
-                    ? '当前使用设备本地数据，适合 APK 离线记录。后续需要联动云端时，可切换到远程 Pages 模式。'
-                    : '当前连接 Cloudflare Pages / Functions。适合和线上项目保持同一套数据入口。'}
+                  {canToggleDataMode
+                    ? (dataMode === 'local'
+                      ? '当前使用设备本地数据，适合 APK 离线记录。后续需要联动云端时，可切换到远程 Pages 模式。'
+                      : '当前连接 Cloudflare Pages / Functions。适合和线上项目保持同一套数据入口。')
+                    : '当前构建已固定为设备本地数据入口。需要联动云端时，请在管理员面板完成远程绑定并手动同步。'}
                 </div>
 
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onDataModeChange('local')}
-                    disabled={dataMode === 'local' || isSwitchingDataMode}
-                    className={`inline-flex items-center gap-2 rounded-xl font-medium transition-transform duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 ${
-                      isMobile ? 'px-3 py-2 text-xs' : 'px-3.5 py-2 text-sm'
-                    }`}
-                    style={dataMode === 'local' ? primaryButtonStyle : quietButtonStyle}
+                {canToggleDataMode ? (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => onDataModeChange('local')}
+                      disabled={dataMode === 'local' || isSwitchingDataMode}
+                      className={`inline-flex items-center gap-2 rounded-xl font-medium transition-transform duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isMobile ? 'px-3 py-2 text-xs' : 'px-3.5 py-2 text-sm'
+                      }`}
+                      style={dataMode === 'local' ? primaryButtonStyle : quietButtonStyle}
+                    >
+                      本地离线
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => onDataModeChange('remote')}
+                      disabled={dataMode === 'remote' || isSwitchingDataMode || !isOnline}
+                      className={`inline-flex items-center gap-2 rounded-xl font-medium transition-transform duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 ${
+                        isMobile ? 'px-3 py-2 text-xs' : 'px-3.5 py-2 text-sm'
+                      }`}
+                      style={dataMode === 'remote' ? primaryButtonStyle : quietButtonStyle}
+                    >
+                      远程 Pages
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    className={`inline-flex items-center gap-2 rounded-full ${isMobile ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'}`}
+                    style={{ ...quietButtonStyle, color: theme.colors.text }}
                   >
-                    本地离线
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onDataModeChange('remote')}
-                    disabled={dataMode === 'remote' || isSwitchingDataMode || !isOnline}
-                    className={`inline-flex items-center gap-2 rounded-xl font-medium transition-transform duration-200 hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-60 ${
-                      isMobile ? 'px-3 py-2 text-xs' : 'px-3.5 py-2 text-sm'
-                    }`}
-                    style={dataMode === 'remote' ? primaryButtonStyle : quietButtonStyle}
-                  >
-                    远程 Pages
-                  </button>
-                </div>
+                    {dataMode === 'local' ? '正式 APK 固定本地模式' : '当前为远程模式'}
+                  </div>
+                )}
               </div>
 
               {!isStandalone && (

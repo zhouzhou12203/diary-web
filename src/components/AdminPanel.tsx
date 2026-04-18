@@ -31,6 +31,7 @@ import { ModalShell } from './ModalShell';
 import { useThemeContext } from './ThemeProvider';
 import { useAdminAuth } from './AdminAuthContext';
 import { apiService } from '../services/api';
+import type { AdminAccessProfile } from '../services/apiTypes.ts';
 import type { DiarySyncStatus } from '../services/entrySync.ts';
 import { getSmartTimeDisplay } from '../utils/timeUtils.ts';
 import { debugError, debugLog } from '../utils/logger.ts';
@@ -59,6 +60,10 @@ export function AdminPanel({
   const { isAdminAuthenticated, setIsAdminAuthenticated } = useAdminAuth();
   const [isAuthenticated, setIsAuthenticated] = useState(isAdminAuthenticated);
   const [passwordInput, setPasswordInput] = useState('');
+  const [adminAccessProfile, setAdminAccessProfile] = useState<AdminAccessProfile | null>(null);
+  const [isLoadingAccessProfile, setIsLoadingAccessProfile] = useState(false);
+  const [showRemoteBindingForm, setShowRemoteBindingForm] = useState(false);
+  const [remoteAdminPassword, setRemoteAdminPassword] = useState('');
   const confirmButtonRef = useRef<HTMLButtonElement>(null);
   const {
     clearConfirmState,
@@ -122,15 +127,68 @@ export function AdminPanel({
     return getAdminTextColor(theme, type);
   };
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const [pendingImportEntries, setPendingImportEntries] = useState<typeof entries | null>(null);
+  const [isImportSubmitting, setIsImportSubmitting] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<DiarySyncStatus | null>(null);
+  const [isSyncingToRemote, setIsSyncingToRemote] = useState(false);
+  const [remoteSyncBaseUrl, setRemoteSyncBaseUrl] = useState('');
+  const [remoteSyncToken, setRemoteSyncToken] = useState('');
+  const [isBindingRemote, setIsBindingRemote] = useState(false);
+
+  const refreshAdminAccessProfile = async () => {
+    setIsLoadingAccessProfile(true);
+
+    try {
+      const nextProfile = await apiService.getAdminAccessProfile();
+      setAdminAccessProfile(nextProfile);
+      return nextProfile;
+    } catch (error) {
+      debugError('加载管理员入口状态失败:', error);
+      setAdminAccessProfile(null);
+      return null;
+    } finally {
+      setIsLoadingAccessProfile(false);
+    }
+  };
+
+  const loadRemoteBindingDefaults = async (force = false) => {
+    try {
+      const defaults = await apiService.getRemoteBindingDefaults();
+      setRemoteSyncBaseUrl((previous) => (force ? defaults.baseUrl : previous || defaults.baseUrl));
+      setRemoteSyncToken((previous) => (force ? defaults.syncToken : previous || defaults.syncToken));
+      return defaults;
+    } catch (error) {
+      debugError('加载远程绑定默认值失败:', error);
+      return { baseUrl: '', syncToken: '' };
+    }
+  };
+
   useEffect(() => {
     setIsAuthenticated(isAdminAuthenticated);
   }, [isAdminAuthenticated]);
 
   useEffect(() => {
-    if (!isOpen || !isAuthenticated) {
+    if (!isOpen) {
+      setAdminAccessProfile(null);
+      setShowRemoteBindingForm(false);
+      setPasswordInput('');
+      setRemoteAdminPassword('');
       setSyncStatus(null);
-      setRemoteSyncBaseUrl('');
-      setRemoteSyncToken('');
+      return;
+    }
+
+    void (async () => {
+      const profile = await refreshAdminAccessProfile();
+      if (profile?.mode === 'local') {
+        await loadRemoteBindingDefaults(true);
+      }
+    })();
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated || adminAccessProfile?.mode !== 'local') {
+      setSyncStatus(null);
       return;
     }
 
@@ -148,15 +206,7 @@ export function AdminPanel({
         setSyncStatus(null);
       }
     })();
-  }, [entries, isAuthenticated, isOpen]);
-
-  const [searchQuery, setSearchQuery] = useState('');
-  const [pendingImportEntries, setPendingImportEntries] = useState<typeof entries | null>(null);
-  const [isImportSubmitting, setIsImportSubmitting] = useState(false);
-  const [syncStatus, setSyncStatus] = useState<DiarySyncStatus | null>(null);
-  const [isSyncingToRemote, setIsSyncingToRemote] = useState(false);
-  const [remoteSyncBaseUrl, setRemoteSyncBaseUrl] = useState('');
-  const [remoteSyncToken, setRemoteSyncToken] = useState('');
+  }, [entries, isAuthenticated, isOpen, adminAccessProfile?.mode]);
   const {
     handleConfirmAction,
     handleDeleteEntry,
@@ -243,20 +293,84 @@ export function AdminPanel({
     }
   };
 
-  const handleSaveRemoteSyncConfig = async () => {
+  const openRemoteBindingForm = async () => {
+    if (adminAccessProfile?.mode !== 'local') {
+      return;
+    }
+
     try {
-      await apiService.saveRemoteSyncConfig({
+      await loadRemoteBindingDefaults();
+    } catch (error) {
+      debugError('打开远程绑定表单失败:', error);
+    }
+
+    setRemoteAdminPassword('');
+    setShowRemoteBindingForm(true);
+  };
+
+  const closeRemoteBindingForm = () => {
+    setRemoteAdminPassword('');
+    setShowRemoteBindingForm(false);
+  };
+
+  const handleEnterWithoutPassword = async () => {
+    try {
+      await apiService.loginAdmin('');
+      syncSessionState(true);
+      await refreshAdminAccessProfile();
+      await loadSettings();
+    } catch (error) {
+      handleAdminOperationError(error, '进入本地管理失败');
+    }
+  };
+
+  const handleBindRemote = async () => {
+    if (isBindingRemote) {
+      return;
+    }
+
+    const wasBound = adminAccessProfile?.remoteBound ?? false;
+    setIsBindingRemote(true);
+
+    try {
+      await apiService.bindRemoteAdmin({
         baseUrl: remoteSyncBaseUrl,
         syncToken: remoteSyncToken,
+        adminPassword: remoteAdminPassword,
       });
-      showOperationFeedback('APK 同步配置已保存');
+      syncSessionState(true);
+      closeRemoteBindingForm();
+      setPasswordInput('');
+      await refreshAdminAccessProfile();
+      await loadSettings();
+      await refreshLocalSyncStatus();
+      showOperationFeedback(wasBound ? '远程重新绑定成功，后续请使用最新的远程管理员密码登录本机管理。' : '远程绑定成功，后续请使用远程管理员密码登录本机管理。');
     } catch (error) {
-      handleAdminOperationError(error, '保存同步配置失败');
+      handleAdminOperationError(error, wasBound ? '重新绑定远程失败' : '绑定远程失败');
+    } finally {
+      setIsBindingRemote(false);
+    }
+  };
+
+  const handleUnbindRemote = async () => {
+    try {
+      await apiService.unbindRemoteAdmin();
+      closeRemoteBindingForm();
+      await refreshAdminAccessProfile();
+      await loadRemoteBindingDefaults(true);
+      showOperationFeedback('已解除远程绑定。本机管理员面板已恢复为免密进入。');
+    } catch (error) {
+      handleAdminOperationError(error, '解除远程绑定失败');
     }
   };
 
   const handleSyncToRemote = async () => {
     if (isSyncingToRemote) {
+      return;
+    }
+
+    if (adminAccessProfile?.mode === 'local' && !adminAccessProfile.remoteBound) {
+      showOperationFeedback('请先完成远程绑定，再执行同步。', true);
       return;
     }
 
@@ -446,10 +560,14 @@ export function AdminPanel({
     newAppPassword,
     newPassword,
     interfaceSettings,
+    accessProfile: adminAccessProfile,
     syncStatus,
     isSyncingToRemote,
+    showRemoteBindingForm,
     remoteSyncBaseUrl,
     remoteSyncToken,
+    remoteAdminPassword,
+    isBindingRemote,
   };
   const authenticatedViewEntries = {
     searchQuery,
@@ -459,8 +577,16 @@ export function AdminPanel({
   const authenticatedViewActions = {
     onRemoteSyncBaseUrlChange: setRemoteSyncBaseUrl,
     onRemoteSyncTokenChange: setRemoteSyncToken,
-    onSaveRemoteSyncConfig: () => {
-      void handleSaveRemoteSyncConfig();
+    onRemoteAdminPasswordChange: setRemoteAdminPassword,
+    onShowRemoteBindingForm: () => {
+      void openRemoteBindingForm();
+    },
+    onHideRemoteBindingForm: closeRemoteBindingForm,
+    onBindRemoteSubmit: () => {
+      void handleBindRemote();
+    },
+    onUnbindRemote: () => {
+      void handleUnbindRemote();
     },
     onSyncToRemote: () => {
       void handleSyncToRemote();
@@ -517,9 +643,29 @@ export function AdminPanel({
       <div className="p-6">
         {!isAuthenticated ? (
           <AdminLoginView
+            accessProfile={adminAccessProfile}
+            isLoadingAccessProfile={isLoadingAccessProfile}
+            showRemoteBindingForm={showRemoteBindingForm}
+            remoteSyncBaseUrl={remoteSyncBaseUrl}
+            remoteSyncToken={remoteSyncToken}
+            remoteAdminPassword={remoteAdminPassword}
+            isBindingRemote={isBindingRemote}
             passwordInput={passwordInput}
             onPasswordInputChange={setPasswordInput}
             onSubmit={handlePasswordSubmit}
+            onEnterWithoutPassword={() => {
+              void handleEnterWithoutPassword();
+            }}
+            onShowRemoteBindingForm={() => {
+              void openRemoteBindingForm();
+            }}
+            onHideRemoteBindingForm={closeRemoteBindingForm}
+            onRemoteSyncBaseUrlChange={setRemoteSyncBaseUrl}
+            onRemoteSyncTokenChange={setRemoteSyncToken}
+            onRemoteAdminPasswordChange={setRemoteAdminPassword}
+            onBindRemoteSubmit={() => {
+              void handleBindRemote();
+            }}
             theme={theme}
             getTextColor={getTextColor}
           />

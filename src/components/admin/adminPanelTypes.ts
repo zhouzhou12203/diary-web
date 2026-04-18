@@ -1,5 +1,6 @@
 import type { ChangeEvent, FormEvent } from 'react';
 import type { ThemeConfig } from '../../hooks/useTheme';
+import type { AdminAccessProfile } from '../../services/apiTypes.ts';
 import type { DiarySyncStatus } from '../../services/entrySync.ts';
 import type { DiaryEntry } from '../../types/index.ts';
 
@@ -56,9 +57,23 @@ export interface NotificationState {
 export type AdminTextColorGetter = (type?: 'primary' | 'secondary') => string;
 
 export interface AdminLoginViewProps {
+  accessProfile: AdminAccessProfile | null;
+  isLoadingAccessProfile: boolean;
+  showRemoteBindingForm: boolean;
+  remoteSyncBaseUrl: string;
+  remoteSyncToken: string;
+  remoteAdminPassword: string;
+  isBindingRemote: boolean;
   passwordInput: string;
   onPasswordInputChange: (value: string) => void;
   onSubmit: (event: FormEvent) => void;
+  onEnterWithoutPassword: () => void;
+  onShowRemoteBindingForm: () => void;
+  onHideRemoteBindingForm: () => void;
+  onRemoteSyncBaseUrlChange: (value: string) => void;
+  onRemoteSyncTokenChange: (value: string) => void;
+  onRemoteAdminPasswordChange: (value: string) => void;
+  onBindRemoteSubmit: () => void;
   theme: ThemeConfig;
   getTextColor: AdminTextColorGetter;
 }
@@ -92,10 +107,14 @@ export interface AdminAuthenticatedSettingsState {
 }
 
 export interface AdminAuthenticatedViewSettingsState extends AdminAuthenticatedSettingsState {
+  accessProfile: AdminAccessProfile | null;
   syncStatus: DiarySyncStatus | null;
   isSyncingToRemote: boolean;
+  showRemoteBindingForm: boolean;
   remoteSyncBaseUrl: string;
   remoteSyncToken: string;
+  remoteAdminPassword: string;
+  isBindingRemote: boolean;
 }
 
 export interface AdminAuthenticatedEntriesState {
@@ -107,7 +126,11 @@ export interface AdminAuthenticatedEntriesState {
 export interface AdminAuthenticatedActions {
   onRemoteSyncBaseUrlChange: (value: string) => void;
   onRemoteSyncTokenChange: (value: string) => void;
-  onSaveRemoteSyncConfig: () => void;
+  onRemoteAdminPasswordChange: (value: string) => void;
+  onShowRemoteBindingForm: () => void;
+  onHideRemoteBindingForm: () => void;
+  onBindRemoteSubmit: () => void;
+  onUnbindRemote: () => void;
   onSyncToRemote: () => void;
   onExportEntries: () => void;
   onImportEntries: (event: ChangeEvent<HTMLInputElement>) => void;

@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { LocalDataStore } from './localDataStore.ts';
 
-type EnvValueGetter = (key: 'MODE' | 'VITE_USE_MOCK_API') => string | undefined;
+type EnvValueGetter = (key: 'MODE' | 'VITE_USE_MOCK_API' | 'VITE_ENABLE_DATA_MODE_SWITCH') => string | undefined;
 
 export class ApiModeStore {
   private static readonly FORCE_LOCAL_KEY = 'diary_force_local';
@@ -27,14 +27,33 @@ export class ApiModeStore {
     return Capacitor.isNativePlatform() || window.location.protocol === 'capacitor:';
   }
 
+  isNativeApp(): boolean {
+    return this.isNativeAppRuntime();
+  }
+
+  canToggleDataMode(getEnvValue: EnvValueGetter): boolean {
+    if (!this.isNativeAppRuntime()) {
+      return true;
+    }
+
+    return getEnvValue('MODE') === 'mock'
+      || getEnvValue('VITE_USE_MOCK_API') === 'true'
+      || getEnvValue('VITE_ENABLE_DATA_MODE_SWITCH') === 'true';
+  }
+
   shouldUseMockService(getEnvValue: EnvValueGetter): boolean {
     const useMock = getEnvValue('VITE_USE_MOCK_API') === 'true';
     const forceLocal = localStorage.getItem(ApiModeStore.FORCE_LOCAL_KEY) === 'true';
     const forceRemote = localStorage.getItem(ApiModeStore.FORCE_REMOTE_KEY) === 'true';
     const mode = getEnvValue('MODE');
     const nativeAppRuntime = this.isNativeAppRuntime();
+    const canToggleDataMode = this.canToggleDataMode(getEnvValue);
 
     if (mode === 'mock' || useMock || forceLocal) {
+      return true;
+    }
+
+    if (nativeAppRuntime && !canToggleDataMode) {
       return true;
     }
 

@@ -3,6 +3,20 @@ export interface SessionState {
   isAdminAuthenticated: boolean;
 }
 
+export interface AdminAccessProfile {
+  mode: 'local' | 'remote';
+  requiresPassword: boolean;
+  remoteBound: boolean;
+  remoteSyncConfigured: boolean;
+  remoteSyncBaseUrl: string;
+}
+
+export interface RemoteBindingInput {
+  baseUrl: string;
+  syncToken: string;
+  adminPassword: string;
+}
+
 export interface PublicSettingsResponse {
   passwordProtectionEnabled: boolean;
   readingDeskEnabled: boolean;

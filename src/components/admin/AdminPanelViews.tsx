@@ -14,16 +14,41 @@ import type {
 } from './adminPanelTypes';
 
 export function AdminLoginView({
+  accessProfile,
+  isLoadingAccessProfile,
+  showRemoteBindingForm,
+  remoteSyncBaseUrl,
+  remoteSyncToken,
+  remoteAdminPassword,
+  isBindingRemote,
   passwordInput,
   onPasswordInputChange,
   onSubmit,
+  onEnterWithoutPassword,
+  onShowRemoteBindingForm,
+  onHideRemoteBindingForm,
+  onRemoteSyncBaseUrlChange,
+  onRemoteSyncTokenChange,
+  onRemoteAdminPasswordChange,
+  onBindRemoteSubmit,
   theme,
   getTextColor,
 }: AdminLoginViewProps) {
   const isDarkLike = theme.mode === 'dark';
+  const isLocalMode = accessProfile?.mode === 'local';
+  const requiresPassword = accessProfile?.requiresPassword ?? true;
+  const remoteBound = accessProfile?.remoteBound ?? false;
+
+  if (isLoadingAccessProfile) {
+    return (
+      <div className="mx-auto max-w-md text-center py-8" style={{ color: getTextColor('secondary') }}>
+        正在读取管理员入口状态...
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-md mx-auto">
+    <div className="mx-auto max-w-md">
       <div className="text-center mb-6">
         <div
           className="mx-auto mb-4 h-3 w-3 rounded-full"
@@ -34,50 +59,167 @@ export function AdminLoginView({
           管理员验证
         </h3>
         <p className="text-sm" style={{ color: getTextColor('secondary') }}>
-          请输入管理员密码以访问管理功能
+          {showRemoteBindingForm
+            ? '先完成远程绑定，再用与远程一致的管理员密码进入本机管理面板'
+            : isLocalMode && !requiresPassword
+              ? '当前设备未绑定远程，可直接进入本地管理。完成远程绑定后，会改为使用远程管理员密码。'
+              : remoteBound
+                ? '当前设备已绑定远程，请输入与线上一致的管理员密码。若线上已改密，可直接重新绑定。'
+                : '请输入管理员密码以访问管理功能'}
         </p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      {showRemoteBindingForm ? (
         <div
-          className="rounded-lg border p-1"
+          className="space-y-3 rounded-xl border p-4"
           style={{
             backgroundColor: isDarkLike ? 'rgba(15, 23, 42, 0.8)' : theme.colors.surface,
             borderColor: theme.mode === 'dark' ? 'rgba(99, 102, 241, 0.3)' : theme.colors.border,
           }}
         >
-          <IconTextInput
-            icon={null}
-            theme={{
-              ...theme,
-              colors: {
-                ...theme.colors,
-                surface: 'transparent',
-                border: 'transparent',
-                text: getTextColor('primary'),
-              },
+          <input
+            type="url"
+            value={remoteSyncBaseUrl}
+            onChange={(event) => onRemoteSyncBaseUrlChange(event.target.value)}
+            placeholder="https://你的-pages-域名.pages.dev"
+            className="w-full rounded-lg border px-4 py-3"
+            style={{
+              backgroundColor: 'transparent',
+              borderColor: theme.colors.border,
+              color: getTextColor('primary'),
             }}
-            value={passwordInput}
-            type="password"
-            placeholder="输入管理员密码"
-            fullWidth
-            onValueChange={onPasswordInputChange}
-            enterKeyHint="done"
-            autoComplete="current-password"
-            required
           />
+          <input
+            type="password"
+            value={remoteSyncToken}
+            onChange={(event) => onRemoteSyncTokenChange(event.target.value)}
+            placeholder="输入线上同步令牌"
+            className="w-full rounded-lg border px-4 py-3"
+            style={{
+              backgroundColor: 'transparent',
+              borderColor: theme.colors.border,
+              color: getTextColor('primary'),
+            }}
+          />
+          <input
+            type="password"
+            value={remoteAdminPassword}
+            onChange={(event) => onRemoteAdminPasswordChange(event.target.value)}
+            placeholder="输入远程管理员密码"
+            className="w-full rounded-lg border px-4 py-3"
+            style={{
+              backgroundColor: 'transparent',
+              borderColor: theme.colors.border,
+              color: getTextColor('primary'),
+            }}
+          />
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="button"
+              onClick={onBindRemoteSubmit}
+              className="w-full rounded-lg py-3 font-medium transition-colors sm:w-auto sm:px-5"
+              style={{
+                backgroundColor: theme.colors.primary,
+                color: 'white',
+              }}
+            >
+              {isBindingRemote ? (remoteBound ? '重新绑定中' : '绑定中') : (remoteBound ? '重新绑定并登录' : '绑定并登录')}
+            </button>
+            <button
+              type="button"
+              onClick={onHideRemoteBindingForm}
+              className="w-full rounded-lg border py-3 font-medium sm:w-auto sm:px-5"
+              style={{
+                borderColor: theme.colors.border,
+                color: getTextColor('primary'),
+              }}
+            >
+              返回
+            </button>
+          </div>
         </div>
-        <button
-          type="submit"
-          className="w-full py-3 rounded-lg font-medium transition-colors"
-          style={{
-            backgroundColor: theme.colors.primary,
-            color: 'white',
-          }}
-        >
-          验证
-        </button>
-      </form>
+      ) : isLocalMode && !requiresPassword ? (
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={onEnterWithoutPassword}
+            className="w-full rounded-lg py-3 font-medium transition-colors"
+            style={{
+              backgroundColor: theme.colors.primary,
+              color: 'white',
+            }}
+          >
+            直接进入本地管理
+          </button>
+          <button
+            type="button"
+            onClick={onShowRemoteBindingForm}
+            className="w-full rounded-lg border py-3 font-medium"
+            style={{
+              borderColor: theme.colors.border,
+              color: getTextColor('primary'),
+            }}
+          >
+            绑定远程
+          </button>
+        </div>
+      ) : (
+        <form onSubmit={onSubmit} className="space-y-4">
+          <div
+            className="rounded-lg border p-1"
+            style={{
+              backgroundColor: isDarkLike ? 'rgba(15, 23, 42, 0.8)' : theme.colors.surface,
+              borderColor: theme.mode === 'dark' ? 'rgba(99, 102, 241, 0.3)' : theme.colors.border,
+            }}
+          >
+            <IconTextInput
+              icon={null}
+              theme={{
+                ...theme,
+                colors: {
+                  ...theme.colors,
+                  surface: 'transparent',
+                  border: 'transparent',
+                  text: getTextColor('primary'),
+                },
+              }}
+              value={passwordInput}
+              type="password"
+              placeholder="输入管理员密码"
+              fullWidth
+              onValueChange={onPasswordInputChange}
+              enterKeyHint="done"
+              autoComplete="current-password"
+              required
+            />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              type="submit"
+              className="w-full rounded-lg py-3 font-medium transition-colors sm:w-auto sm:flex-1"
+              style={{
+                backgroundColor: theme.colors.primary,
+                color: 'white',
+              }}
+            >
+              验证
+            </button>
+            {isLocalMode && (
+              <button
+                type="button"
+                onClick={onShowRemoteBindingForm}
+                className="w-full rounded-lg border py-3 font-medium sm:w-auto"
+                style={{
+                  borderColor: theme.colors.border,
+                  color: getTextColor('primary'),
+                }}
+              >
+                {remoteBound ? '重新绑定远程' : '绑定远程'}
+              </button>
+            )}
+          </div>
+        </form>
+      )}
     </div>
   );
 }
@@ -170,16 +312,24 @@ export function AdminAuthenticatedView({
     newAppPassword,
     newPassword,
     interfaceSettings,
+    accessProfile,
     syncStatus,
     isSyncingToRemote,
+    showRemoteBindingForm,
     remoteSyncBaseUrl,
     remoteSyncToken,
+    remoteAdminPassword,
+    isBindingRemote,
   } = settingsState;
   const { searchQuery, filteredEntries, entryTimestampLabels } = entriesState;
   const {
     onRemoteSyncBaseUrlChange,
     onRemoteSyncTokenChange,
-    onSaveRemoteSyncConfig,
+    onRemoteAdminPasswordChange,
+    onShowRemoteBindingForm,
+    onHideRemoteBindingForm,
+    onBindRemoteSubmit,
+    onUnbindRemote,
     onSyncToRemote,
     onExportEntries,
     onImportEntries,
@@ -205,12 +355,19 @@ export function AdminAuthenticatedView({
       <SyncSettingsSection
         theme={theme}
         getTextColor={getTextColor}
+        accessProfile={accessProfile}
         remoteSyncBaseUrl={remoteSyncBaseUrl}
         remoteSyncToken={remoteSyncToken}
-        isSyncingToRemote={isSyncingToRemote}
+        remoteAdminPassword={remoteAdminPassword}
+        showRemoteBindingForm={showRemoteBindingForm}
+        isBindingRemote={isBindingRemote}
         onRemoteSyncBaseUrlChange={onRemoteSyncBaseUrlChange}
         onRemoteSyncTokenChange={onRemoteSyncTokenChange}
-        onSaveRemoteSyncConfig={onSaveRemoteSyncConfig}
+        onRemoteAdminPasswordChange={onRemoteAdminPasswordChange}
+        onShowRemoteBindingForm={onShowRemoteBindingForm}
+        onHideRemoteBindingForm={onHideRemoteBindingForm}
+        onBindRemoteSubmit={onBindRemoteSubmit}
+        onUnbindRemote={onUnbindRemote}
       />
 
       <PrimaryActionsSection
@@ -228,6 +385,7 @@ export function AdminAuthenticatedView({
                   : '当前无待同步内容，还没有执行过云端同步。'
         }
         isSyncingToRemote={isSyncingToRemote}
+        showAdminPasswordAction={accessProfile?.mode !== 'local'}
         onSyncToRemote={onSyncToRemote}
         onExportEntries={onExportEntries}
         onImportEntries={onImportEntries}
@@ -256,14 +414,16 @@ export function AdminAuthenticatedView({
         onToggleInterfaceSetting={onToggleInterfaceSetting}
       />
 
-      <AdminPasswordSection
-        visible={showPasswordSettings}
-        theme={theme}
-        getTextColor={getTextColor}
-        newPassword={newPassword}
-        onNewPasswordChange={onNewPasswordChange}
-        onPasswordChange={onPasswordChange}
-      />
+      {accessProfile?.mode !== 'local' && (
+        <AdminPasswordSection
+          visible={showPasswordSettings}
+          theme={theme}
+          getTextColor={getTextColor}
+          newPassword={newPassword}
+          onNewPasswordChange={onNewPasswordChange}
+          onPasswordChange={onPasswordChange}
+        />
+      )}
 
       <AdminEntriesSection
         searchQuery={searchQuery}
