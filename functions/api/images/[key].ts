@@ -1,8 +1,8 @@
 import type { ApiResponse } from '../../../src/types/index.ts';
 import type { Env } from '../_shared.ts';
+import { decodeManagedImageKey } from '../_imageStorage.ts';
 import { jsonResponse } from '../_shared.ts';
 
-const IMAGE_KEY_PATTERN = /^(?:[a-zA-Z0-9][a-zA-Z0-9._-]*)(?:\/[a-zA-Z0-9][a-zA-Z0-9._-]*)*$/;
 const DEFAULT_IMAGE_CONTENT_TYPE = 'application/octet-stream';
 const IMAGE_CACHE_CONTROL = 'public, max-age=31536000, immutable';
 
@@ -23,9 +23,9 @@ function buildImageHeaders(object: R2ObjectBody) {
 }
 
 export const onRequestGet = async (context: { params: { key: string }; env: Env }): Promise<Response> => {
-  const { key } = context.params;
+  const key = decodeManagedImageKey(context.params.key);
 
-  if (!key || !IMAGE_KEY_PATTERN.test(key)) {
+  if (!key) {
     return jsonResponse<ApiResponse>({
       success: false,
       error: '无效的图片标识',

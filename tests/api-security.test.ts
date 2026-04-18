@@ -100,6 +100,13 @@ class MockD1Database {
       return this.entries.filter((entry) => entry.id === id);
     }
 
+    if (normalized === 'SELECT images FROM diary_entries WHERE id != ?') {
+      const id = Number(args[0]);
+      return this.entries
+        .filter((entry) => entry.id !== id)
+        .map((entry) => ({ images: entry.images }));
+    }
+
     if (normalized === 'SELECT * FROM diary_entries WHERE id = ? AND hidden = 0') {
       const id = Number(args[0]);
       return this.entries.filter((entry) => entry.id === id && entry.hidden === 0);
@@ -1456,6 +1463,138 @@ test('write endpoints require admin session and allow create update delete after
   assert.equal(deleteResponse.status, 200);
   const db = env.DB as unknown as MockD1Database;
   assert.equal(db.entries.some((entry) => entry.id === 1), false);
+});
+
+test('deleting an entry also removes its unreferenced managed r2 images', async () => {
+  const bucket = new MockR2Bucket();
+  const entryImageUrl = 'https://example.com/api/images/diary%2Fdelete-me.png';
+  await bucket.put('diary/delete-me.png', new TextEncoder().encode('binary'), {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+
+  const env = createEnv({
+    settings: {
+      admin_password: 'admin-pass',
+      app_password_enabled: 'false',
+      quick_filters_enabled: 'true',
+      export_enabled: 'true',
+      archive_view_enabled: 'true',
+      welcome_page_enabled: 'true',
+    },
+    entries: [
+      {
+        id: 1,
+        title: '含图日记',
+        content: '正文',
+        content_type: 'markdown',
+        mood: 'neutral',
+        weather: 'unknown',
+        images: JSON.stringify([entryImageUrl]),
+        location: null,
+        created_at: '2026-04-01T08:00:00.000Z',
+        updated_at: '2026-04-01T08:00:00.000Z',
+        tags: '[]',
+        hidden: 0,
+      },
+    ],
+    imagesBucket: bucket as unknown as R2Bucket,
+  });
+
+  const adminCookie = await loginAsAdmin(env);
+  const response = await deleteEntry({
+    params: { id: '1' },
+    request: new Request('https://example.com/api/entries/1', {
+      method: 'DELETE',
+      headers: { Cookie: adminCookie },
+    }),
+    env,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(await bucket.get('diary/delete-me.png'), null);
+});
+
+test('updating an entry deletes removed r2 images but keeps shared ones', async () => {
+  const bucket = new MockR2Bucket();
+  await bucket.put('diary/remove-me.png', new TextEncoder().encode('remove'), {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+  await bucket.put('diary/keep-shared.png', new TextEncoder().encode('keep'), {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+
+  const env = createEnv({
+    settings: {
+      admin_password: 'admin-pass',
+      app_password_enabled: 'false',
+      quick_filters_enabled: 'true',
+      export_enabled: 'true',
+      archive_view_enabled: 'true',
+      welcome_page_enabled: 'true',
+    },
+    entries: [
+      {
+        id: 1,
+        title: '第一篇',
+        content: '正文',
+        content_type: 'markdown',
+        mood: 'neutral',
+        weather: 'unknown',
+        images: JSON.stringify([
+          'https://example.com/api/images/diary%2Fremove-me.png',
+          'https://example.com/api/images/diary%2Fkeep-shared.png',
+        ]),
+        location: null,
+        created_at: '2026-04-01T08:00:00.000Z',
+        updated_at: '2026-04-01T08:00:00.000Z',
+        tags: '[]',
+        hidden: 0,
+      },
+      {
+        id: 2,
+        title: '第二篇',
+        content: '正文',
+        content_type: 'markdown',
+        mood: 'neutral',
+        weather: 'unknown',
+        images: JSON.stringify([
+          'https://example.com/api/images/diary%2Fkeep-shared.png',
+        ]),
+        location: null,
+        created_at: '2026-04-02T08:00:00.000Z',
+        updated_at: '2026-04-02T08:00:00.000Z',
+        tags: '[]',
+        hidden: 0,
+      },
+    ],
+    imagesBucket: bucket as unknown as R2Bucket,
+  });
+
+  const adminCookie = await loginAsAdmin(env);
+  const response = await updateEntry({
+    params: { id: '1' },
+    request: new Request('https://example.com/api/entries/1', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Cookie: adminCookie,
+      },
+      body: JSON.stringify({
+        images: [],
+      }),
+    }),
+    env,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(await bucket.get('diary/remove-me.png'), null);
+  assert.notEqual(await bucket.get('diary/keep-shared.png'), null);
 });
 
 test('entry write endpoints reject invalid structured payloads with 400 responses', async () => {

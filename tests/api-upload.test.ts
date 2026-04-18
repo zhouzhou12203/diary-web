@@ -261,6 +261,29 @@ test('image upload stores file in r2 and returns local image URL when bucket bin
   assert.equal(new TextDecoder().decode(imageBuffer), 'fake-image-data');
 });
 
+test('image fetch accepts encoded route keys for nested r2 paths', async () => {
+  const bucket = new MockR2Bucket();
+  const env = createEnv({
+    IMAGES_BUCKET: bucket,
+  });
+  const storedKey = 'diary/image-preview-test.png';
+
+  await bucket.put(storedKey, new TextEncoder().encode('preview'), {
+    httpMetadata: {
+      contentType: 'image/png',
+    },
+  });
+
+  const response = await getImage({
+    params: { key: encodeURIComponent(storedKey) },
+    env,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('Content-Type'), 'image/png');
+  assert.equal(await response.text(), 'preview');
+});
+
 test('image upload proxies file to cloudflare images and returns accessible url', async () => {
   const env = createEnv({
     IMAGES_ACCOUNT_ID: 'account-123',

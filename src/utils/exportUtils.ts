@@ -53,6 +53,46 @@ function formatExportTimestamp(value: string | Date): string {
   return new Date(value).toLocaleString(zhCnLocale);
 }
 
+function encodeBytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+
+  for (let index = 0; index < bytes.length; index += 1) {
+    binary += String.fromCharCode(bytes[index] ?? 0);
+  }
+
+  return btoa(binary);
+}
+
+function isEmbeddedImageUrl(imageUrl: string) {
+  return imageUrl.startsWith('data:image/');
+}
+
+async function fetchImageAsDataUrl(
+  imageUrl: string,
+  options: {
+    fetchImpl: typeof fetch;
+    baseUrl: string;
+  }
+) {
+  const { fetchImpl, baseUrl } = options;
+  const resolvedUrl = new URL(imageUrl, baseUrl).toString();
+  const response = await fetchImpl(resolvedUrl, {
+    credentials: 'same-origin',
+  });
+
+  if (!response.ok) {
+    throw new Error(`图片获取失败（HTTP ${response.status}）`);
+  }
+
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  const contentType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim() || 'application/octet-stream';
+  if (!contentType.startsWith('image/')) {
+    throw new Error('导出时获取到的资源不是图片');
+  }
+
+  return `data:${contentType};base64,${encodeBytesToBase64(bytes)}`;
+}
+
 function buildEntryTextBlock(entry: DiaryEntry, index: number): string {
   const sections = [
     `## ${index + 1}. ${entry.title || '无标题'}`,
@@ -126,6 +166,50 @@ export function createDiaryTextExport({
     ...header,
     ...entries.flatMap((entry, index) => [buildEntryTextBlock(entry, index), '']),
   ].join('\n').trimEnd() + '\n';
+}
+
+export async function packageDiaryEntryImagesForExport(options: {
+  entries: DiaryEntry[];
+  fetchImpl?: typeof fetch;
+  baseUrl?: string;
+}) {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const baseUrl = options.baseUrl ?? globalThis.location?.origin ?? 'https://localhost';
+  let packagedImageCount = 0;
+  let failedImageCount = 0;
+
+  const packagedEntries: DiaryEntry[] = [];
+
+  for (const entry of options.entries) {
+    const nextImages: string[] = [];
+
+    for (const imageUrl of entry.images ?? []) {
+      if (isEmbeddedImageUrl(imageUrl)) {
+        nextImages.push(imageUrl);
+        continue;
+      }
+
+      try {
+        const dataUrl = await fetchImageAsDataUrl(imageUrl, { fetchImpl, baseUrl });
+        nextImages.push(dataUrl);
+        packagedImageCount += 1;
+      } catch {
+        nextImages.push(imageUrl);
+        failedImageCount += 1;
+      }
+    }
+
+    packagedEntries.push({
+      ...entry,
+      images: nextImages,
+    });
+  }
+
+  return {
+    entries: packagedEntries,
+    packagedImageCount,
+    failedImageCount,
+  };
 }
 
 export function downloadBlobFile(blob: Blob, filename: string) {

@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react';
-import { CloudOff, RefreshCw } from 'lucide-react';
+import { ArrowUp, CloudOff, RefreshCw } from 'lucide-react';
 import { AdminAuthProvider, useAdminAuth } from './components/AdminAuthContext';
 import { ContentStatePanel } from './components/ContentStatePanel';
 import { ThemeProvider, useThemeContext } from './components/ThemeProvider';
@@ -104,6 +104,7 @@ function AppContent() {
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [dataMode, setDataMode] = useState<'local' | 'remote'>(() => apiService.getCurrentMode());
   const [isSwitchingDataMode, setIsSwitchingDataMode] = useState(false);
+  const [showBackToLatestButton, setShowBackToLatestButton] = useState(false);
 
   const enterAppTimeoutRef = useRef<number | null>(null);
   const finishTransitionTimeoutRef = useRef<number | null>(null);
@@ -212,6 +213,19 @@ function AppContent() {
       if (finishTransitionTimeoutRef.current !== null) {
         window.clearTimeout(finishTransitionTimeoutRef.current);
       }
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      setShowBackToLatestButton(window.scrollY > 480);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
     };
   }, []);
 
@@ -346,6 +360,12 @@ function AppContent() {
       </div>
     </div>
   );
+  const canShowBackToLatestButton =
+    showMainApp
+    && showBackToLatestButton
+    && !isFormOpen
+    && !isAdminPanelOpen
+    && !isExportModalOpen;
 
   if (passwordProtectionEnabled === null || sessionLoading) {
     return (
@@ -588,6 +608,27 @@ function AppContent() {
             type={notification.type}
             onClose={hideNotification}
           />
+        )}
+
+        {canShowBackToLatestButton && (
+          <button
+            type="button"
+            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+            className="fixed z-40 flex items-center gap-2 rounded-full px-4 py-3 shadow-xl transition-transform duration-200 hover:-translate-y-0.5"
+            style={{
+              right: isMobile ? 'max(12px, var(--safe-area-right))' : '24px',
+              bottom: isMobile ? 'max(16px, calc(var(--safe-area-bottom) + 12px))' : '24px',
+              backgroundColor: theme.mode === 'dark' ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)',
+              border: `1px solid ${theme.colors.border}`,
+              color: theme.colors.text,
+              backdropFilter: 'blur(12px)',
+            }}
+            aria-label="回到最新日记"
+            title="回到最新日记"
+          >
+            <ArrowUp className="h-4 w-4" />
+            <span className="text-sm font-medium">最新</span>
+          </button>
         )}
       </div>
     </>

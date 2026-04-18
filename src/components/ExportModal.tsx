@@ -14,6 +14,7 @@ import {
   DiaryExportFormat,
   downloadBlobFile,
   exportFormatOptions,
+  packageDiaryEntryImagesForExport,
 } from '../utils/exportUtils';
 
 interface ExportModalProps {
@@ -28,6 +29,8 @@ export function ExportModal({ isOpen, onClose, entries, exportType }: ExportModa
   const exportButtonRef = useRef<HTMLButtonElement>(null);
   const [exportFormat, setExportFormat] = useState<DiaryExportFormat>('json');
   const [includeHidden, setIncludeHidden] = useState(false);
+  const [packageImages, setPackageImages] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const { hideNotification, notification, showNotification } = useNotificationState();
   useBodyScrollLock(isOpen);
 
@@ -35,27 +38,39 @@ export function ExportModal({ isOpen, onClose, entries, exportType }: ExportModa
 
   const visibleEntries = includeHidden ? entries : entries.filter(entry => !entry.hidden);
 
-  const handleExport = () => {
+  const handleExport = async () => {
     if (visibleEntries.length === 0) {
       showNotification('没有可导出的日记！', 'error');
       return;
     }
 
     const fileName = buildDiaryExportFileName(exportType);
+    setIsExporting(true);
 
-    if (exportFormat === 'json') {
-      exportAsJSON(fileName);
-    } else {
-      exportAsText(fileName);
+    try {
+      if (exportFormat === 'json') {
+        await exportAsJSON(fileName);
+      } else {
+        exportAsText(fileName);
+      }
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : '导出失败，请重试', 'error');
+    } finally {
+      setIsExporting(false);
     }
-
-    onClose();
   };
 
-  const exportAsJSON = (fileName: string) => {
+  const exportAsJSON = async (fileName: string) => {
+    const exportEntries = packageImages
+      ? await packageDiaryEntryImagesForExport({ entries: visibleEntries })
+      : {
+          entries: visibleEntries,
+          packagedImageCount: 0,
+          failedImageCount: 0,
+        };
     const blob = new Blob([
       JSON.stringify(createDiaryExportPayload({
-        entries: visibleEntries,
+        entries: exportEntries.entries,
         exportType,
         includeHidden,
       }), null, 2),
@@ -64,6 +79,23 @@ export function ExportModal({ isOpen, onClose, entries, exportType }: ExportModa
     });
 
     downloadBlobFile(blob, `${fileName}.json`);
+
+    if (packageImages && exportEntries.failedImageCount > 0) {
+      showNotification(
+        `已导出 ${visibleEntries.length} 条日记，打包 ${exportEntries.packagedImageCount} 张图片，另有 ${exportEntries.failedImageCount} 张保留原链接`,
+        'error'
+      );
+      return;
+    }
+
+    if (packageImages) {
+      showNotification(
+        `已导出 ${visibleEntries.length} 条日记，并打包 ${exportEntries.packagedImageCount} 张图片`,
+        'success'
+      );
+      return;
+    }
+
     showNotification(`成功导出 ${visibleEntries.length} 条日记（${exportType}）为 JSON 格式！`, 'success');
   };
 
@@ -161,12 +193,29 @@ export function ExportModal({ isOpen, onClose, entries, exportType }: ExportModa
               包含隐藏的日记
             </span>
           </label>
+
+          <label className={`flex items-start gap-3 ${exportFormat === 'json' ? '' : 'opacity-55'}`}>
+            <input
+              type="checkbox"
+              checked={packageImages}
+              disabled={exportFormat !== 'json' || isExporting}
+              onChange={(event) => setPackageImages(event.target.checked)}
+              style={{ accentColor: theme.colors.primary }}
+            />
+            <span className="text-sm" style={{ color: theme.colors.text }}>
+              导出时打包图片
+              <span className="mt-1 block text-xs" style={{ color: theme.colors.textSecondary }}>
+                将图片转成内嵌数据，导入到别处也能显示，但导出文件会明显变大。
+              </span>
+            </span>
+          </label>
         </div>
       </div>
 
       <div className="flex gap-3 border-t p-6" style={{ borderColor: theme.colors.border }}>
         <button
           onClick={onClose}
+          disabled={isExporting}
           className="flex-1 rounded-lg border px-4 py-2 transition-colors"
           style={{
             borderColor: theme.colors.border,
@@ -179,14 +228,16 @@ export function ExportModal({ isOpen, onClose, entries, exportType }: ExportModa
         <button
           ref={exportButtonRef}
           onClick={handleExport}
+          disabled={isExporting}
           className="flex flex-1 items-center justify-center gap-2 rounded-lg px-4 py-2 transition-colors"
           style={{
             backgroundColor: theme.colors.primary,
-            color: 'white'
+            color: 'white',
+            opacity: isExporting ? 0.72 : 1,
           }}
         >
           <Download className="w-4 h-4" />
-          导出
+          {isExporting ? '导出中...' : '导出'}
         </button>
       </div>
 

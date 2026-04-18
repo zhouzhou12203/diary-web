@@ -10,6 +10,7 @@ import {
   readSession,
   requireAdminSession,
 } from '../../_shared.ts';
+import { deleteManagedImagesIfUnreferenced } from '../../_imageStorage.ts';
 
 type EditRequest = Partial<Omit<DiaryEntry, 'id' | 'created_at' | 'updated_at'>>;
 const ENTRY_EDIT_BODY_MAX_BYTES = 40 * 1024 * 1024;
@@ -54,6 +55,8 @@ export const onRequestPost = async (context: { params: { id: string }; request: 
       }, { status: 404 });
     }
 
+    const previousImages = formatEntry(existingEntry).images ?? [];
+
     const { data: normalizedUpdates, error } = normalizeEntryInput(updates, { allowPartial: true });
     if (!normalizedUpdates) {
       return jsonResponse<ApiResponse>({
@@ -91,6 +94,19 @@ export const onRequestPost = async (context: { params: { id: string }; request: 
 
     if (!updatedEntry) {
       throw new Error('更新失败');
+    }
+
+    const nextImages = formatEntry(updatedEntry).images ?? [];
+    const removedImages = previousImages.filter((imageUrl) => !nextImages.includes(imageUrl));
+    const imageCleanup = await deleteManagedImagesIfUnreferenced({
+      env: context.env,
+      request: context.request,
+      imageUrls: removedImages,
+      excludingEntryId: id,
+    });
+
+    if (imageCleanup.failedKeys.length > 0) {
+      console.warn('Failed to delete some unreferenced R2 images after entry edit:', imageCleanup.failedKeys);
     }
 
     return jsonResponse<DiaryEntry>({

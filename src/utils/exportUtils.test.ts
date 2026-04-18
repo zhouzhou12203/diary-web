@@ -5,6 +5,7 @@ import {
   buildDiaryExportFileName,
   createDiaryExportPayload,
   createDiaryTextExport,
+  packageDiaryEntryImagesForExport,
 } from './exportUtils';
 
 const sampleEntries: DiaryEntry[] = [
@@ -72,5 +73,44 @@ describe('exportUtils', () => {
     expect(text).toContain('🏷️ 标签: #生活 #散步');
     expect(text).toContain('📍 位置: 上海徐汇');
     expect(text).toContain('今天阳光很好。');
+  });
+
+  it('packages image urls into embedded data urls for portable exports', async () => {
+    const result = await packageDiaryEntryImagesForExport({
+      entries: [{
+        ...sampleEntries[0],
+        images: ['/api/images/diary%2Fsample.png'],
+      }],
+      baseUrl: 'https://example.com',
+      fetchImpl: async (input) => {
+        const url = input instanceof Request ? input.url : String(input);
+        expect(url).toBe('https://example.com/api/images/diary%2Fsample.png');
+
+        return new Response(new Uint8Array([104, 101, 108, 108, 111]), {
+          status: 200,
+          headers: {
+            'Content-Type': 'image/png',
+          },
+        });
+      },
+    });
+
+    expect(result.packagedImageCount).toBe(1);
+    expect(result.failedImageCount).toBe(0);
+    expect(result.entries[0]?.images?.[0]).toBe('data:image/png;base64,aGVsbG8=');
+  });
+
+  it('keeps original image urls when packaging fails', async () => {
+    const result = await packageDiaryEntryImagesForExport({
+      entries: [{
+        ...sampleEntries[0],
+        images: ['https://cdn.example.com/sample.png'],
+      }],
+      fetchImpl: async () => new Response('missing', { status: 404 }),
+    });
+
+    expect(result.packagedImageCount).toBe(0);
+    expect(result.failedImageCount).toBe(1);
+    expect(result.entries[0]?.images).toEqual(['https://cdn.example.com/sample.png']);
   });
 });

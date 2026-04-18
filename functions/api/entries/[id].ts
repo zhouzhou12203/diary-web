@@ -10,6 +10,7 @@ import {
   readSession,
   requireAdminSession,
 } from '../_shared.ts';
+import { deleteManagedImagesIfUnreferenced } from '../_imageStorage.ts';
 
 type EntryUpdates = Partial<Omit<DiaryEntry, 'id' | 'created_at' | 'updated_at'>>;
 const ENTRY_UPDATE_BODY_MAX_BYTES = 40 * 1024 * 1024;
@@ -96,6 +97,8 @@ export const onRequestPut = async (context: { params: { id: string }; request: R
       }, { status: 404 });
     }
 
+    const previousImages = formatEntry(existingEntry).images ?? [];
+
     const fields: string[] = [];
     const values: unknown[] = [];
     const { data: normalizedUpdates, error } = normalizeEntryInput(updates, { allowPartial: true });
@@ -162,6 +165,19 @@ export const onRequestPut = async (context: { params: { id: string }; request: R
       throw new Error('更新失败');
     }
 
+    const nextImages = formatEntry(updatedEntry).images ?? [];
+    const removedImages = previousImages.filter((imageUrl) => !nextImages.includes(imageUrl));
+    const imageCleanup = await deleteManagedImagesIfUnreferenced({
+      env: context.env,
+      request: context.request,
+      imageUrls: removedImages,
+      excludingEntryId: id,
+    });
+
+    if (imageCleanup.failedKeys.length > 0) {
+      console.warn('Failed to delete some unreferenced R2 images after entry update:', imageCleanup.failedKeys);
+    }
+
     return jsonResponse<DiaryEntry>({
       success: true,
       data: formatEntry(updatedEntry),
@@ -192,7 +208,7 @@ export const onRequestDelete = async (context: { params: { id: string }; request
   }
 
   try {
-    const existingEntry = await context.env.DB.prepare('SELECT id FROM diary_entries WHERE id = ?').bind(id).first();
+    const existingEntry = await context.env.DB.prepare('SELECT * FROM diary_entries WHERE id = ?').bind(id).first<Record<string, unknown>>();
 
     if (!existingEntry) {
       return jsonResponse<ApiResponse>({
@@ -205,6 +221,17 @@ export const onRequestDelete = async (context: { params: { id: string }; request
 
     if (!result.success || result.meta.changes === 0) {
       throw new Error('删除失败');
+    }
+
+    const imageCleanup = await deleteManagedImagesIfUnreferenced({
+      env: context.env,
+      request: context.request,
+      imageUrls: formatEntry(existingEntry).images ?? [],
+      excludingEntryId: id,
+    });
+
+    if (imageCleanup.failedKeys.length > 0) {
+      console.warn('Failed to delete some unreferenced R2 images after entry deletion:', imageCleanup.failedKeys);
     }
 
     return jsonResponse<ApiResponse>({
