@@ -157,7 +157,10 @@ export function EntryPreviewModal({
             {onEdit ? (
               <button
                 type="button"
-                onClick={() => onEdit(entry)}
+                onClick={() => {
+                  onClose();
+                  onEdit(entry);
+                }}
                 className={`rounded-xl text-sm font-medium transition-transform duration-200 hover:-translate-y-0.5 ${isMobile ? 'px-2.5 py-1.5' : 'px-3 py-2'}`}
                 style={{
                   background: `linear-gradient(135deg, ${theme.colors.primary}, ${theme.colors.accent})`,

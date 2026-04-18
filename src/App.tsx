@@ -40,6 +40,10 @@ const ExportModal = lazy(() =>
   import('./components/ExportModal').then((module) => ({ default: module.ExportModal }))
 );
 
+const BACK_TO_LATEST_MIN_ENTRIES = 9;
+const BACK_TO_LATEST_EARLY_SCROLL_Y = 120;
+const BACK_TO_LATEST_DEFAULT_SCROLL_Y = 480;
+
 function AppContent() {
   const { theme } = useThemeContext();
   const { isAdminAuthenticated, setIsAdminAuthenticated } = useAdminAuth();
@@ -218,7 +222,10 @@ function AppContent() {
 
   useEffect(() => {
     const handleScroll = () => {
-      setShowBackToLatestButton(window.scrollY > 480);
+      const scrollThreshold = displayEntries.length >= BACK_TO_LATEST_MIN_ENTRIES
+        ? BACK_TO_LATEST_EARLY_SCROLL_Y
+        : BACK_TO_LATEST_DEFAULT_SCROLL_Y;
+      setShowBackToLatestButton(window.scrollY > scrollThreshold);
     };
 
     handleScroll();
@@ -227,7 +234,7 @@ function AppContent() {
     return () => {
       window.removeEventListener('scroll', handleScroll);
     };
-  }, []);
+  }, [displayEntries.length]);
 
   useEffect(() => {
     if (isAdminAuthenticated) {
