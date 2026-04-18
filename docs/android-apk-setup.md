@@ -1,6 +1,7 @@
 # Android APK 打包
 
 本项目已接入 `Capacitor Android`，可将当前前端构建产物打包为本地可安装的 Android 应用。
+默认发布流程只走 GitHub Actions，不依赖本机 Android Studio、Android SDK 或本机 Java 环境。
 
 ## 当前行为
 
@@ -9,7 +10,37 @@
 - 如需读取 Cloudflare Pages / Functions 的远程数据，可在应用内“设备与离线”卡片中切换到 `远程 Pages` 模式。
 - 当前版本还没有自动双向同步；本地数据与远程数据是两套独立存储。后续如需同步，建议在现有模式切换基础上补充显式同步流程，而不是静默自动合并。
 
-## 环境要求
+## 推荐发布方式：GitHub Actions
+
+只要仓库里已经提交了 Android 工程，本机就不需要再准备 Android 打包环境。
+
+### Tag 发布
+
+1. 确认要发布的提交已经在目标分支上，例如 `master`
+2. 创建并推送一个 APK tag，例如：
+
+```bash
+git tag apk-20260418-master
+git push origin apk-20260418-master
+```
+
+3. GitHub Actions 会自动执行 `.github/workflows/build-android.yml`
+4. 工作流会自动：
+   - 安装 Node.js 和 Java 21
+   - 执行 `npm ci`
+   - 执行 `npm run android:sync`
+   - 执行 `./gradlew assembleDebug`
+   - 上传 APK artifact
+   - 自动创建或更新同名 GitHub Release，并把 APK 挂到 Release 资产
+
+### 手动触发
+
+- 也可以在 GitHub Actions 页面手动运行 `Build And Release Android APK`
+- 手动触发时会生成 artifact，但不会自动创建 GitHub Release
+
+## 本地构建
+
+只有在你确实要本机调试 Android 工程时，才需要下面这些环境。
 
 - Node.js 与 npm
 - Android Studio

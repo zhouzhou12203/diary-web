@@ -104,6 +104,8 @@ npm run start:remote
 - 手机上可通过“添加到主屏幕”作为 Web App 使用；桌面浏览器也可安装为独立窗口应用。
 - 已接入 `Capacitor Android` 包装层，可生成本地可安装的 APK。
 - Android 原生安装包默认使用本地离线数据模式，不联网也能写作和浏览；需要联动线上 Pages 数据时，可在应用内切换到远程模式。
+- Android APK 默认通过 GitHub Actions 打包发布，不依赖本机 Android 环境。
+- 创建并推送 APK tag 后，GitHub 会自动构建 APK、上传 artifact，并创建同名 Release。
 - Android 打包说明见 `docs/android-apk-setup.md`
 
 ### 🗺️ 高德地图API配置（推荐）
@@ -137,6 +139,25 @@ npm run start:remote
 - 首次登录后应立即在管理员面板中修改密码
 
 ## 🚀 部署
+
+### GitHub Actions APK 发布
+
+Android APK 推荐只通过 GitHub Actions 构建，不在本机安装 Android Studio / SDK。
+
+1. 把要发布的代码推到目标分支，例如 `master`
+2. 创建并推送一个 APK tag，例如：
+   ```bash
+   git tag apk-20260418-master
+   git push origin apk-20260418-master
+   ```
+3. GitHub Actions 会自动运行 Android 打包流程
+4. 构建完成后可在：
+   - Actions artifacts 下载 APK
+   - GitHub Releases 下载同名 Release 资产
+
+当前 Android workflow 位置：
+
+- `.github/workflows/build-android.yml`
 
 ### Cloudflare Pages 部署（推荐）
 
