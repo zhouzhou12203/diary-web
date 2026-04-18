@@ -33,6 +33,13 @@ type UploadTarget =
   | { kind: 'r2'; bucket: R2Bucket }
   | { kind: 'cloudflare-images'; config: CloudflareImagesConfig };
 
+type UploadedFile = {
+  name: string;
+  type: string;
+  size: number;
+  arrayBuffer: () => Promise<ArrayBuffer>;
+};
+
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
 const DEFAULT_IMAGE_VARIANT = 'public';
 const R2_IMAGE_KEY_PREFIX = 'diary';
@@ -118,12 +125,12 @@ function sanitizeFileExtension(fileName: string, contentType: string) {
   }
 }
 
-function buildR2ImageKey(file: File) {
+function buildR2ImageKey(file: UploadedFile) {
   const extension = sanitizeFileExtension(file.name || '', file.type);
   return `${R2_IMAGE_KEY_PREFIX}/image-${Date.now()}-${crypto.randomUUID()}.${extension}`;
 }
 
-async function uploadToR2(bucket: R2Bucket, file: File, request: Request): Promise<string> {
+async function uploadToR2(bucket: R2Bucket, file: UploadedFile, request: Request): Promise<string> {
   const key = buildR2ImageKey(file);
   const contentType = file.type || DEFAULT_IMAGE_CONTENT_TYPE;
   const buffer = await file.arrayBuffer();
@@ -137,9 +144,14 @@ async function uploadToR2(bucket: R2Bucket, file: File, request: Request): Promi
   return new URL(`/api/images/${encodeURIComponent(key)}`, request.url).toString();
 }
 
-async function uploadToCloudflareImages(file: File, config: CloudflareImagesConfig): Promise<string> {
+async function uploadToCloudflareImages(file: UploadedFile, config: CloudflareImagesConfig): Promise<string> {
+  const canonicalFile = new File(
+    [await file.arrayBuffer()],
+    file.name || `diary-image-${Date.now()}`,
+    { type: file.type || DEFAULT_IMAGE_CONTENT_TYPE }
+  );
   const uploadFormData = new FormData();
-  uploadFormData.set('file', file, file.name || `diary-image-${Date.now()}`);
+  uploadFormData.set('file', canonicalFile, canonicalFile.name);
 
   const cloudflareResponse = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${config.accountId}/images/v1`,
@@ -173,22 +185,48 @@ async function uploadToCloudflareImages(file: File, config: CloudflareImagesConf
   return uploadedImageUrl;
 }
 
-function extractUploadedFile(formData: FormData): File | null {
-  const directFile = formData.get('file');
-  if (directFile instanceof File) {
+function toUploadedFile(value: unknown): UploadedFile | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const candidate = value as Partial<UploadedFile>;
+  if (
+    typeof candidate.arrayBuffer !== 'function'
+    || typeof candidate.size !== 'number'
+    || !Number.isFinite(candidate.size)
+    || typeof candidate.type !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    name: typeof candidate.name === 'string' && candidate.name.trim()
+      ? candidate.name
+      : `diary-image-${Date.now()}.bin`,
+    type: candidate.type,
+    size: candidate.size,
+    arrayBuffer: candidate.arrayBuffer.bind(value) as () => Promise<ArrayBuffer>,
+  };
+}
+
+function extractUploadedFile(formData: FormData): UploadedFile | null {
+  const directFile = toUploadedFile(formData.get('file'));
+  if (directFile) {
     return directFile;
   }
 
   for (const fieldName of FALLBACK_UPLOAD_FIELD_NAMES) {
-    const candidate = formData.get(fieldName);
-    if (candidate instanceof File) {
+    const candidate = toUploadedFile(formData.get(fieldName));
+    if (candidate) {
       return candidate;
     }
   }
 
   for (const value of formData.values()) {
-    if (value instanceof File) {
-      return value;
+    const candidate = toUploadedFile(value);
+    if (candidate) {
+      return candidate;
     }
   }
 

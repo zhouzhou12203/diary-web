@@ -304,4 +304,61 @@ describe('AdminPanel', () => {
     await screen.findByText('合并导入成功！已导入 1 条日记。');
     expect(screen.queryByText('选择导入模式')).not.toBeInTheDocument();
   });
+
+  it('uploads embedded backup images before remote import', async () => {
+    vi.spyOn(apiService, 'loginAdmin').mockResolvedValue({
+      isAuthenticated: true,
+      isAdminAuthenticated: true,
+    });
+    vi.spyOn(adminSettingsStore, 'loadAdminPanelSettings').mockResolvedValue(defaultLoadedSettings);
+    vi.spyOn(adminPanelActions, 'parseEntriesBackup').mockResolvedValue([
+      {
+        title: '带图片的导入日记',
+        content: '导入内容',
+        images: ['data:image/png;base64,aGVsbG8='],
+      },
+    ]);
+    vi.spyOn(apiService, 'getCurrentMode').mockReturnValue('remote');
+    vi.spyOn(apiService, 'uploadImage').mockResolvedValue('https://example.com/imported-image.png');
+    vi.spyOn(apiService, 'batchImportEntries').mockResolvedValue([]);
+    const onEntriesUpdate = vi.fn(async () => {});
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <AdminPanel
+        isOpen={true}
+        onClose={vi.fn()}
+        entries={[sampleEntry]}
+        onEntriesUpdate={onEntriesUpdate}
+      />
+    );
+
+    await user.type(screen.getByPlaceholderText('输入管理员密码'), 'admin-pass');
+    await user.click(screen.getByRole('button', { name: '验证' }));
+    expect(await screen.findByRole('button', { name: '退出登录' })).toBeInTheDocument();
+
+    const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).not.toBeNull();
+
+    fireEvent.change(fileInput!, {
+      target: {
+        files: [new File(['{}'], 'backup.json', { type: 'application/json' })],
+      },
+    });
+
+    expect(await screen.findByText('选择导入模式')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: '确认导入' }));
+
+    await waitFor(() => {
+      expect(apiService.uploadImage).toHaveBeenCalledTimes(1);
+      expect(apiService.batchImportEntries).toHaveBeenCalledWith([
+        {
+          title: '带图片的导入日记',
+          content: '导入内容',
+          images: ['https://example.com/imported-image.png'],
+        },
+      ], { overwrite: false });
+      expect(onEntriesUpdate).toHaveBeenCalledTimes(1);
+    });
+  });
 });

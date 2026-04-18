@@ -155,6 +155,48 @@ test('image upload falls back to the first file in multipart form data', async (
   assert.equal(payload.success, true);
 });
 
+test('image upload accepts file-like values from runtime form data parsing', async () => {
+  const bucket = new MockR2Bucket();
+  const env = createEnv({
+    IMAGES_BUCKET: bucket,
+  });
+  const adminCookie = await buildSessionCookie('admin', env);
+  const fileLikeValue = {
+    name: 'runtime-upload.png',
+    type: 'image/png',
+    size: 15,
+    async arrayBuffer() {
+      return new TextEncoder().encode('fake-image-data').buffer;
+    },
+  };
+
+  const response = await uploadImage({
+    request: {
+      url: 'https://example.com/api/uploads/image',
+      headers: new Headers({
+        Cookie: adminCookie,
+        'Content-Type': 'multipart/form-data; boundary=test',
+      }),
+      async formData() {
+        return {
+          get(key: string) {
+            return key === 'file' ? fileLikeValue : null;
+          },
+          *values() {
+            yield fileLikeValue;
+          },
+        } as unknown as FormData;
+      },
+    } as Request,
+    env,
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await parseJson<{ success: boolean; data?: { url: string } }>(response);
+  assert.equal(payload.success, true);
+  assert.match(payload.data?.url ?? '', /^https:\/\/example\.com\/api\/images\/diary%2Fimage-/);
+});
+
 test('image upload stores file in r2 and returns local image URL when bucket binding exists', async () => {
   const bucket = new MockR2Bucket();
   const env = createEnv({
