@@ -1,6 +1,7 @@
 import type { ApiResponse, DiaryEntry } from '../../../../src/types/index.ts';
 import type { Env } from '../../_shared.ts';
 import {
+  ensureEntryUuidForRow,
   formatEntry,
   jsonResponse,
   normalizeEntryInput,
@@ -55,7 +56,8 @@ export const onRequestPost = async (context: { params: { id: string }; request: 
       }, { status: 404 });
     }
 
-    const previousImages = formatEntry(existingEntry).images ?? [];
+    const hydratedExistingEntry = await ensureEntryUuidForRow(context.env.DB, existingEntry);
+    const previousImages = formatEntry(hydratedExistingEntry).images ?? [];
 
     const { data: normalizedUpdates, error } = normalizeEntryInput(updates, { allowPartial: true });
     if (!normalizedUpdates) {
@@ -86,7 +88,7 @@ export const onRequestPost = async (context: { params: { id: string }; request: 
       normalizedUpdates.mood ?? null,
       normalizedUpdates.weather ?? null,
       normalizedUpdates.images ?? null,
-      normalizedUpdates.location !== undefined ? normalizedUpdates.location : existingEntry.location ?? null,
+      normalizedUpdates.location !== undefined ? normalizedUpdates.location : hydratedExistingEntry.location ?? null,
       normalizedUpdates.tags ?? null,
       normalizedUpdates.hidden ?? null,
       id
@@ -111,7 +113,7 @@ export const onRequestPost = async (context: { params: { id: string }; request: 
 
     return jsonResponse<DiaryEntry>({
       success: true,
-      data: formatEntry(updatedEntry),
+      data: formatEntry(await ensureEntryUuidForRow(context.env.DB, updatedEntry)),
       message: '日记编辑成功',
     });
   } catch (error) {

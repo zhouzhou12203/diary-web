@@ -4,6 +4,7 @@ import {
   AppSecuritySection,
   InterfaceSettingsSection,
   PrimaryActionsSection,
+  SyncSettingsSection,
 } from './AdminPanelSections';
 import type {
   AdminAuthenticatedViewProps,
@@ -169,9 +170,17 @@ export function AdminAuthenticatedView({
     newAppPassword,
     newPassword,
     interfaceSettings,
+    syncStatus,
+    isSyncingToRemote,
+    remoteSyncBaseUrl,
+    remoteSyncToken,
   } = settingsState;
   const { searchQuery, filteredEntries, entryTimestampLabels } = entriesState;
   const {
+    onRemoteSyncBaseUrlChange,
+    onRemoteSyncTokenChange,
+    onSaveRemoteSyncConfig,
+    onSyncToRemote,
     onExportEntries,
     onImportEntries,
     onRunR2SelfCheck,
@@ -193,9 +202,33 @@ export function AdminAuthenticatedView({
 
   return (
     <div className="space-y-6">
+      <SyncSettingsSection
+        theme={theme}
+        getTextColor={getTextColor}
+        remoteSyncBaseUrl={remoteSyncBaseUrl}
+        remoteSyncToken={remoteSyncToken}
+        isSyncingToRemote={isSyncingToRemote}
+        onRemoteSyncBaseUrlChange={onRemoteSyncBaseUrlChange}
+        onRemoteSyncTokenChange={onRemoteSyncTokenChange}
+        onSaveRemoteSyncConfig={onSaveRemoteSyncConfig}
+      />
+
       <PrimaryActionsSection
         settings={settings}
         theme={theme}
+        syncDescription={
+          isSyncingToRemote
+            ? '正在把本地改动推送到云端，请稍候。'
+            : syncStatus == null
+              ? '正在读取本地同步状态。'
+              : syncStatus.totalPending > 0
+                ? `待同步 ${syncStatus.totalPending} 条，新增 ${syncStatus.pendingCreates} / 更新 ${syncStatus.pendingUpdates} / 删除 ${syncStatus.pendingDeletes}${syncStatus.conflicts > 0 ? ` / 冲突 ${syncStatus.conflicts}` : ''}`
+                : syncStatus.lastSyncedAt
+                  ? `当前无待同步内容，上次同步于 ${new Date(syncStatus.lastSyncedAt).toLocaleString('zh-CN')}`
+                  : '当前无待同步内容，还没有执行过云端同步。'
+        }
+        isSyncingToRemote={isSyncingToRemote}
+        onSyncToRemote={onSyncToRemote}
         onExportEntries={onExportEntries}
         onImportEntries={onImportEntries}
         onRunR2SelfCheck={onRunR2SelfCheck}

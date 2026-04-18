@@ -21,6 +21,7 @@ import {
 
 type EntryRow = {
   id: number;
+  entry_uuid?: string | null;
   title: string;
   content: string;
   content_type: string;
@@ -123,19 +124,20 @@ class MockD1Database {
         .map((entry) => ({ created_at: entry.created_at }));
     }
 
-    if (normalized.startsWith('INSERT INTO diary_entries (title, content, content_type, mood, weather, images, location, tags, hidden)')) {
+    if (normalized.startsWith('INSERT INTO diary_entries (entry_uuid, title, content, content_type, mood, weather, images, location, tags, hidden)')) {
       const createdAt = new Date().toISOString();
       const newEntry: EntryRow = {
         id: this.getNextEntryId(),
-        title: String(args[0]),
-        content: String(args[1]),
-        content_type: String(args[2]),
-        mood: String(args[3]),
-        weather: String(args[4]),
-        images: String(args[5]),
-        location: args[6] == null ? null : String(args[6]),
-        tags: String(args[7]),
-        hidden: Number(args[8]),
+        entry_uuid: args[0] == null ? null : String(args[0]),
+        title: String(args[1]),
+        content: String(args[2]),
+        content_type: String(args[3]),
+        mood: String(args[4]),
+        weather: String(args[5]),
+        images: String(args[6]),
+        location: args[7] == null ? null : String(args[7]),
+        tags: String(args[8]),
+        hidden: Number(args[9]),
         created_at: createdAt,
         updated_at: createdAt,
       };
@@ -143,7 +145,28 @@ class MockD1Database {
       return [newEntry];
     }
 
-    if (normalized.startsWith('INSERT INTO diary_entries (title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)')) {
+    if (normalized.startsWith('INSERT INTO diary_entries (entry_uuid, title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)')) {
+      const newEntry: EntryRow = {
+        id: this.getNextEntryId(),
+        entry_uuid: args[0] == null ? null : String(args[0]),
+        title: String(args[1]),
+        content: String(args[2]),
+        content_type: String(args[3]),
+        mood: String(args[4]),
+        weather: String(args[5]),
+        images: String(args[6]),
+        location: args[7] == null ? null : String(args[7]),
+        tags: String(args[8]),
+        hidden: Number(args[9]),
+        created_at: String(args[10]),
+        updated_at: String(args[11]),
+      };
+      this.entries.unshift(newEntry);
+      return [newEntry];
+    }
+
+    if (normalized.startsWith('INSERT INTO diary_entries (entry_uuid, title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)') === false
+      && normalized.startsWith('INSERT INTO diary_entries (title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)')) {
       const updatedAt = new Date().toISOString();
       const newEntry: EntryRow = {
         id: this.getNextEntryId(),
@@ -207,6 +230,9 @@ class MockD1Database {
           case 'hidden':
             entry.hidden = Number(value);
             break;
+          case 'entry_uuid':
+            entry.entry_uuid = value == null ? null : String(value);
+            break;
           case 'created_at':
             entry.created_at = String(value);
             break;
@@ -260,6 +286,18 @@ class MockD1Database {
       return [entry];
     }
 
+    if (normalized === 'UPDATE diary_entries SET entry_uuid = ? WHERE id = ?') {
+      const entryUuid = String(args[0]);
+      const id = Number(args[1]);
+      const entry = this.entries.find((item) => item.id === id);
+      if (!entry) {
+        return [];
+      }
+
+      entry.entry_uuid = entryUuid;
+      return [entry];
+    }
+
     throw new Error(`Unsupported SELECT query in test mock: ${normalized}`);
   }
 
@@ -301,6 +339,20 @@ class MockD1Database {
       return Promise.resolve({
         success: true,
         meta: { changes: previousLength, last_row_id: 0 },
+      });
+    }
+
+    if (normalized === 'UPDATE diary_entries SET entry_uuid = ? WHERE id = ?') {
+      const entryUuid = String(args[0]);
+      const id = Number(args[1]);
+      const entry = this.entries.find((item) => item.id === id);
+      if (entry) {
+        entry.entry_uuid = entryUuid;
+      }
+
+      return Promise.resolve({
+        success: true,
+        meta: { changes: entry ? 1 : 0, last_row_id: 0 },
       });
     }
 

@@ -31,12 +31,26 @@ interface SettingsActionCardConfig {
 interface PrimaryActionsSectionProps {
   settings: AdminSettings;
   theme: ThemeConfig;
+  syncDescription: string;
+  isSyncingToRemote: boolean;
+  onSyncToRemote: () => void;
   onExportEntries: () => void;
   onImportEntries: (event: ChangeEvent<HTMLInputElement>) => void;
   onRunR2SelfCheck: () => void;
   onTogglePasswordSettings: () => void;
   onToggleHiddenEntries: () => void;
   onToggleWelcomePage: () => void;
+}
+
+interface SyncSettingsSectionProps {
+  theme: ThemeConfig;
+  getTextColor: AdminTextColorGetter;
+  remoteSyncBaseUrl: string;
+  remoteSyncToken: string;
+  isSyncingToRemote: boolean;
+  onRemoteSyncBaseUrlChange: (value: string) => void;
+  onRemoteSyncTokenChange: (value: string) => void;
+  onSaveRemoteSyncConfig: () => void;
 }
 
 interface AppSecuritySectionProps {
@@ -182,9 +196,62 @@ function PasswordInputPanel({
   );
 }
 
+export function SyncSettingsSection({
+  theme,
+  getTextColor,
+  remoteSyncBaseUrl,
+  remoteSyncToken,
+  isSyncingToRemote,
+  onRemoteSyncBaseUrlChange,
+  onRemoteSyncTokenChange,
+  onSaveRemoteSyncConfig,
+}: SyncSettingsSectionProps) {
+  return (
+    <PanelSurface theme={theme}>
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold" style={{ color: getTextColor('primary') }}>
+            APK 同步设置
+          </h3>
+          <p className="mt-1 text-sm" style={{ color: getTextColor('secondary') }}>
+            这里填写线上 Pages 地址和同步令牌。仅手动同步时联网，本地写作和浏览仍使用设备内数据。
+          </p>
+        </div>
+
+        <div className="space-y-3">
+          <input
+            type="url"
+            value={remoteSyncBaseUrl}
+            onChange={(event) => onRemoteSyncBaseUrlChange(event.target.value)}
+            placeholder="https://你的-pages-域名.pages.dev"
+            className="w-full rounded border px-3 py-2"
+            style={{
+              backgroundColor: theme.colors.surface,
+              borderColor: theme.colors.border,
+              color: theme.colors.text,
+            }}
+          />
+          <InlineActionInput
+            theme={theme}
+            type="password"
+            value={remoteSyncToken}
+            placeholder="输入线上同步令牌"
+            buttonLabel={isSyncingToRemote ? '同步中' : '保存同步配置'}
+            onValueChange={onRemoteSyncTokenChange}
+            onSubmit={onSaveRemoteSyncConfig}
+          />
+        </div>
+      </div>
+    </PanelSurface>
+  );
+}
+
 export function PrimaryActionsSection({
   settings,
   theme,
+  syncDescription,
+  isSyncingToRemote,
+  onSyncToRemote,
   onExportEntries,
   onImportEntries,
   onRunR2SelfCheck,
@@ -193,6 +260,12 @@ export function PrimaryActionsSection({
   onToggleWelcomePage,
 }: PrimaryActionsSectionProps) {
   const actionCards: SettingsActionCardConfig[] = [
+    {
+      key: 'sync-remote',
+      title: isSyncingToRemote ? '正在同步到云端' : '手动同步到云端',
+      description: syncDescription,
+      onClick: onSyncToRemote,
+    },
     {
       key: 'export',
       title: '导出数据',

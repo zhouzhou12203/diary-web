@@ -1,6 +1,15 @@
 import type { ApiResponse, DiaryEntry } from '../../src/types/index.ts';
 import type { Env } from './_shared.ts';
-import { formatEntry, jsonResponse, normalizeEntryInput, optionsResponse, parseJsonBody, readSession, requireAdminSession } from './_shared.ts';
+import {
+  ensureEntryUuidsForRows,
+  formatEntry,
+  jsonResponse,
+  normalizeEntryInput,
+  optionsResponse,
+  parseJsonBody,
+  readSession,
+  requireAdminSession,
+} from './_shared.ts';
 
 const ENTRY_WRITE_BODY_MAX_BYTES = 40 * 1024 * 1024;
 
@@ -13,10 +22,11 @@ export const onRequestGet = async (context: { request: Request; env: Env }): Pro
       ? context.env.DB.prepare('SELECT * FROM diary_entries ORDER BY created_at DESC')
       : context.env.DB.prepare('SELECT * FROM diary_entries WHERE hidden = 0 ORDER BY created_at DESC');
     const { results } = await statement.all<Record<string, unknown>>();
+    const hydratedResults = await ensureEntryUuidsForRows(context.env.DB, results);
 
     return jsonResponse<DiaryEntry[]>({
       success: true,
-      data: results.map((row) => formatEntry(row)),
+      data: hydratedResults.map((row) => formatEntry(row)),
     });
   } catch (error) {
     return jsonResponse<ApiResponse>({
@@ -46,7 +56,10 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
       }, { status: bodyStatus ?? 400 });
     }
 
-    const { data: entry, error } = normalizeEntryInput(body, { requireContent: true });
+    const { data: entry, error } = normalizeEntryInput(body, {
+      requireContent: true,
+      includeEntryUuid: true,
+    });
     if (!entry) {
       return jsonResponse<ApiResponse>({
         success: false,
@@ -55,10 +68,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     }
 
     const result = await context.env.DB.prepare(`
-      INSERT INTO diary_entries (title, content, content_type, mood, weather, images, location, tags, hidden)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO diary_entries (entry_uuid, title, content, content_type, mood, weather, images, location, tags, hidden)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       RETURNING *
     `).bind(
+      entry.entry_uuid,
       entry.title,
       entry.content,
       entry.content_type,

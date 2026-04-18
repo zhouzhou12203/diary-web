@@ -31,6 +31,7 @@ import { ModalShell } from './ModalShell';
 import { useThemeContext } from './ThemeProvider';
 import { useAdminAuth } from './AdminAuthContext';
 import { apiService } from '../services/api';
+import type { DiarySyncStatus } from '../services/entrySync.ts';
 import { getSmartTimeDisplay } from '../utils/timeUtils.ts';
 import { debugError, debugLog } from '../utils/logger.ts';
 
@@ -125,9 +126,37 @@ export function AdminPanel({
     setIsAuthenticated(isAdminAuthenticated);
   }, [isAdminAuthenticated]);
 
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated) {
+      setSyncStatus(null);
+      setRemoteSyncBaseUrl('');
+      setRemoteSyncToken('');
+      return;
+    }
+
+    void (async () => {
+      try {
+        const [nextSyncStatus, nextRemoteSyncConfig] = await Promise.all([
+          apiService.getLocalSyncStatus(),
+          apiService.getRemoteSyncConfig(),
+        ]);
+        setSyncStatus(nextSyncStatus);
+        setRemoteSyncBaseUrl(nextRemoteSyncConfig.baseUrl);
+        setRemoteSyncToken(nextRemoteSyncConfig.syncToken);
+      } catch (error) {
+        debugError('加载本地同步状态失败:', error);
+        setSyncStatus(null);
+      }
+    })();
+  }, [entries, isAuthenticated, isOpen]);
+
   const [searchQuery, setSearchQuery] = useState('');
   const [pendingImportEntries, setPendingImportEntries] = useState<typeof entries | null>(null);
   const [isImportSubmitting, setIsImportSubmitting] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<DiarySyncStatus | null>(null);
+  const [isSyncingToRemote, setIsSyncingToRemote] = useState(false);
+  const [remoteSyncBaseUrl, setRemoteSyncBaseUrl] = useState('');
+  const [remoteSyncToken, setRemoteSyncToken] = useState('');
   const {
     handleConfirmAction,
     handleDeleteEntry,
@@ -202,6 +231,48 @@ export function AdminPanel({
       showOperationFeedback(`R2 自检异常：${result.message}`, true);
     } catch (error) {
       handleAdminOperationError(error, 'R2 自检失败');
+    }
+  };
+
+  const refreshLocalSyncStatus = async () => {
+    try {
+      setSyncStatus(await apiService.getLocalSyncStatus());
+    } catch (error) {
+      debugError('刷新本地同步状态失败:', error);
+      setSyncStatus(null);
+    }
+  };
+
+  const handleSaveRemoteSyncConfig = async () => {
+    try {
+      await apiService.saveRemoteSyncConfig({
+        baseUrl: remoteSyncBaseUrl,
+        syncToken: remoteSyncToken,
+      });
+      showOperationFeedback('APK 同步配置已保存');
+    } catch (error) {
+      handleAdminOperationError(error, '保存同步配置失败');
+    }
+  };
+
+  const handleSyncToRemote = async () => {
+    if (isSyncingToRemote) {
+      return;
+    }
+
+    setIsSyncingToRemote(true);
+
+    try {
+      const result = await apiService.syncLocalEntriesToRemote();
+      await onEntriesUpdate();
+      await refreshLocalSyncStatus();
+      showOperationFeedback(
+        `同步完成：上传/更新 ${result.pushedCount} 条，删除 ${result.deletedCount} 条，云端当前共 ${result.remoteCount} 条。`
+      );
+    } catch (error) {
+      handleAdminOperationError(error, '同步到云端失败');
+    } finally {
+      setIsSyncingToRemote(false);
     }
   };
 
@@ -375,6 +446,10 @@ export function AdminPanel({
     newAppPassword,
     newPassword,
     interfaceSettings,
+    syncStatus,
+    isSyncingToRemote,
+    remoteSyncBaseUrl,
+    remoteSyncToken,
   };
   const authenticatedViewEntries = {
     searchQuery,
@@ -382,6 +457,14 @@ export function AdminPanel({
     entryTimestampLabels,
   };
   const authenticatedViewActions = {
+    onRemoteSyncBaseUrlChange: setRemoteSyncBaseUrl,
+    onRemoteSyncTokenChange: setRemoteSyncToken,
+    onSaveRemoteSyncConfig: () => {
+      void handleSaveRemoteSyncConfig();
+    },
+    onSyncToRemote: () => {
+      void handleSyncToRemote();
+    },
     onExportEntries: () => {
       void handleExportEntries();
     },

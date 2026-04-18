@@ -1,6 +1,7 @@
 import type { ApiResponse, DiaryEntry } from '../../../src/types/index.ts';
 import type { Env } from '../_shared.ts';
 import {
+  ensureEntryUuidForRow,
   formatEntry,
   jsonResponse,
   normalizeEntryInput,
@@ -47,9 +48,11 @@ export const onRequestGet = async (context: { params: { id: string }; request: R
       }, { status: 404 });
     }
 
+    const hydratedRow = await ensureEntryUuidForRow(context.env.DB, result);
+
     return jsonResponse<DiaryEntry>({
       success: true,
-      data: formatEntry(result),
+      data: formatEntry(hydratedRow),
     });
   } catch (error) {
     return jsonResponse<ApiResponse>({
@@ -97,7 +100,8 @@ export const onRequestPut = async (context: { params: { id: string }; request: R
       }, { status: 404 });
     }
 
-    const previousImages = formatEntry(existingEntry).images ?? [];
+    const hydratedExistingEntry = await ensureEntryUuidForRow(context.env.DB, existingEntry);
+    const previousImages = formatEntry(hydratedExistingEntry).images ?? [];
 
     const fields: string[] = [];
     const values: unknown[] = [];
@@ -149,7 +153,7 @@ export const onRequestPut = async (context: { params: { id: string }; request: R
     if (fields.length === 0) {
       return jsonResponse<DiaryEntry>({
         success: true,
-        data: formatEntry(existingEntry),
+        data: formatEntry(hydratedExistingEntry),
         message: '没有更改',
       });
     }
@@ -180,7 +184,7 @@ export const onRequestPut = async (context: { params: { id: string }; request: R
 
     return jsonResponse<DiaryEntry>({
       success: true,
-      data: formatEntry(updatedEntry),
+      data: formatEntry(await ensureEntryUuidForRow(context.env.DB, updatedEntry)),
       message: '日记更新成功',
     });
   } catch (error) {
@@ -226,7 +230,7 @@ export const onRequestDelete = async (context: { params: { id: string }; request
     const imageCleanup = await deleteManagedImagesIfUnreferenced({
       env: context.env,
       request: context.request,
-      imageUrls: formatEntry(existingEntry).images ?? [],
+      imageUrls: formatEntry(await ensureEntryUuidForRow(context.env.DB, existingEntry)).images ?? [],
       excludingEntryId: id,
     });
 

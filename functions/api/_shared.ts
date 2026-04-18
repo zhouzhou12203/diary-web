@@ -15,6 +15,7 @@ export interface Env {
   SESSION_SECRET?: string;
   ADMIN_BOOTSTRAP_PASSWORD?: string;
   APP_BOOTSTRAP_PASSWORD?: string;
+  SYNC_ACCESS_TOKEN?: string;
   STATS_API_KEY?: string;
   IMAGES_ACCOUNT_ID?: string;
   IMAGES_API_TOKEN?: string;
@@ -56,11 +57,14 @@ const MAX_IMAGE_DATA_URL_LENGTH = 12 * 1024 * 1024;
 const MAX_TAGS_COUNT = 30;
 const MAX_TAG_LENGTH = 64;
 const MAX_LOCATION_JSON_LENGTH = 8192;
+const MIN_SYNC_TOKEN_LENGTH = 12;
+const MAX_SYNC_TOKEN_LENGTH = 256;
 export type PublicSettingKey = PublicBooleanSettingKey;
 
-type EntryInput = Partial<Omit<DiaryEntry, 'id' | 'updated_at'>>;
+type EntryInput = Partial<Omit<DiaryEntry, 'id'>>;
 
 type NormalizedEntryInput = {
+  entry_uuid?: string;
   title?: string;
   content?: string;
   content_type?: 'markdown' | 'plain';
@@ -71,12 +75,13 @@ type NormalizedEntryInput = {
   tags?: string;
   hidden?: number;
   created_at?: string;
+  updated_at?: string;
 };
 
 export const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Sync-Token',
 };
 
 const defaultApiHeaders = {
@@ -187,6 +192,10 @@ function validateMaxLength(value: string, maxLength: number, error: string): str
   }
 
   return null;
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -323,6 +332,11 @@ export async function createPasswordHash(password: string): Promise<string> {
   return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${salt}$${hash}`;
 }
 
+function getSyncAccessToken(env: Env): string | null {
+  const configuredToken = env.SYNC_ACCESS_TOKEN?.trim();
+  return configuredToken || null;
+}
+
 async function verifyPasswordHash(storedHash: string, password: string): Promise<boolean> {
   const [prefix, iterationsValue, salt, expectedHash] = storedHash.split('$');
   const iterations = Number(iterationsValue);
@@ -446,6 +460,57 @@ export async function verifyPasswordForScope(
   return false;
 }
 
+export async function isSyncAccessTokenConfigured(db: D1Database, env: Env): Promise<boolean> {
+  const storedHash = await getSetting(db, 'sync_access_token_hash');
+  return Boolean(storedHash || getSyncAccessToken(env));
+}
+
+export async function setSyncAccessToken(db: D1Database, token: string): Promise<void> {
+  const tokenHash = await createPasswordHash(token);
+  await setSetting(db, 'sync_access_token_hash', tokenHash);
+}
+
+export async function clearSyncAccessToken(db: D1Database): Promise<void> {
+  await deleteSetting(db, 'sync_access_token_hash');
+}
+
+export async function verifySyncAccessToken(
+  db: D1Database,
+  candidate: string,
+  env: Env
+): Promise<boolean> {
+  const normalizedCandidate = candidate.trim();
+  if (!normalizedCandidate) {
+    return false;
+  }
+
+  const storedHash = await getSetting(db, 'sync_access_token_hash');
+  if (storedHash) {
+    return verifyPasswordHash(storedHash, normalizedCandidate);
+  }
+
+  const configuredToken = getSyncAccessToken(env);
+  if (!configuredToken) {
+    return false;
+  }
+
+  return timingSafeEqual(configuredToken, normalizedCandidate);
+}
+
+export function validateSyncAccessToken(token: string): string {
+  const trimmedToken = token.trim();
+
+  if (trimmedToken.length < MIN_SYNC_TOKEN_LENGTH) {
+    throw new Error(`同步令牌长度至少 ${MIN_SYNC_TOKEN_LENGTH} 位`);
+  }
+
+  if (trimmedToken.length > MAX_SYNC_TOKEN_LENGTH) {
+    throw new Error(`同步令牌长度不能超过 ${MAX_SYNC_TOKEN_LENGTH} 位`);
+  }
+
+  return trimmedToken;
+}
+
 async function importSessionKey(
   env: Env,
   usage: 'sign' | 'verify',
@@ -565,15 +630,17 @@ export function clearSessionCookie(env: Env, request?: Request): string {
 
 export async function getAdminSettingsPayload(db: D1Database, env: Env) {
   const publicSettings = await buildPublicSettingsPayload(db);
-  const [adminPasswordConfigured, appPasswordConfigured] = await Promise.all([
+  const [adminPasswordConfigured, appPasswordConfigured, syncAccessTokenConfigured] = await Promise.all([
     isPasswordConfigured(db, 'admin', env),
     isPasswordConfigured(db, 'app', env),
+    isSyncAccessTokenConfigured(db, env),
   ]);
 
   return {
     ...publicSettings,
     adminPasswordConfigured,
     appPasswordConfigured,
+    syncAccessTokenConfigured,
   };
 }
 
@@ -588,6 +655,7 @@ export function isPublicSettingKey(key: string): key is PublicSettingKey {
 export function formatEntry(row: Record<string, unknown>): DiaryEntry {
   return {
     id: Number(row.id),
+    entry_uuid: row.entry_uuid ? String(row.entry_uuid) : undefined,
     title: String(row.title ?? ''),
     content: String(row.content ?? ''),
     content_type: (row.content_type as 'markdown' | 'plain') || 'markdown',
@@ -602,11 +670,46 @@ export function formatEntry(row: Record<string, unknown>): DiaryEntry {
   };
 }
 
+export function generateEntryUuid() {
+  return crypto.randomUUID();
+}
+
+export async function ensureEntryUuidForRow(
+  db: D1Database,
+  row: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (isNonEmptyString(row.entry_uuid)) {
+    return row;
+  }
+
+  const entryId = Number(row.id);
+  if (!Number.isInteger(entryId) || entryId <= 0) {
+    return row;
+  }
+
+  const entryUuid = generateEntryUuid();
+  await db.prepare('UPDATE diary_entries SET entry_uuid = ? WHERE id = ?').bind(entryUuid, entryId).run();
+
+  return {
+    ...row,
+    entry_uuid: entryUuid,
+  };
+}
+
+export async function ensureEntryUuidsForRows(
+  db: D1Database,
+  rows: Array<Record<string, unknown>>
+): Promise<Array<Record<string, unknown>>> {
+  return Promise.all(rows.map((row) => ensureEntryUuidForRow(db, row)));
+}
+
 export function normalizeEntryInput(
   input: unknown,
   options: {
     requireContent?: boolean;
     includeCreatedAt?: boolean;
+    includeUpdatedAt?: boolean;
+    includeEntryUuid?: boolean;
     allowPartial?: boolean;
   } = {}
 ): { data?: NormalizedEntryInput; error?: string } {
@@ -618,8 +721,20 @@ export function normalizeEntryInput(
   const {
     requireContent = false,
     includeCreatedAt = false,
+    includeUpdatedAt = false,
+    includeEntryUuid = false,
     allowPartial = false,
   } = options;
+
+  if (includeEntryUuid && input.entry_uuid !== undefined) {
+    if (!isNonEmptyString(input.entry_uuid)) {
+      return { error: '同步标识格式无效' };
+    }
+
+    data.entry_uuid = input.entry_uuid.trim();
+  } else if (includeEntryUuid && !allowPartial) {
+    data.entry_uuid = generateEntryUuid();
+  }
 
   if (!allowPartial || input.title !== undefined) {
     if (input.title !== undefined && typeof input.title !== 'string') {
@@ -790,6 +905,16 @@ export function normalizeEntryInput(
     data.created_at = input.created_at;
   } else if (includeCreatedAt && !allowPartial) {
     data.created_at = new Date().toISOString();
+  }
+
+  if (includeUpdatedAt && input.updated_at !== undefined) {
+    if (typeof input.updated_at !== 'string' || Number.isNaN(Date.parse(input.updated_at))) {
+      return { error: '更新时间格式无效' };
+    }
+
+    data.updated_at = input.updated_at;
+  } else if (includeUpdatedAt && !allowPartial) {
+    data.updated_at = data.created_at ?? new Date().toISOString();
   }
 
   return { data };

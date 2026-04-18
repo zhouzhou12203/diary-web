@@ -1,5 +1,6 @@
 import type { ChangeEvent, FormEvent } from 'react';
 import type { ThemeConfig } from '../../hooks/useTheme';
+import type { DiarySyncStatus } from '../../services/entrySync.ts';
 import type { DiaryEntry } from '../../types/index.ts';
 
 export interface AdminPanelProps {
@@ -90,6 +91,13 @@ export interface AdminAuthenticatedSettingsState {
   interfaceSettings: AdminInterfaceSettings;
 }
 
+export interface AdminAuthenticatedViewSettingsState extends AdminAuthenticatedSettingsState {
+  syncStatus: DiarySyncStatus | null;
+  isSyncingToRemote: boolean;
+  remoteSyncBaseUrl: string;
+  remoteSyncToken: string;
+}
+
 export interface AdminAuthenticatedEntriesState {
   searchQuery: string;
   filteredEntries: DiaryEntry[];
@@ -97,6 +105,10 @@ export interface AdminAuthenticatedEntriesState {
 }
 
 export interface AdminAuthenticatedActions {
+  onRemoteSyncBaseUrlChange: (value: string) => void;
+  onRemoteSyncTokenChange: (value: string) => void;
+  onSaveRemoteSyncConfig: () => void;
+  onSyncToRemote: () => void;
   onExportEntries: () => void;
   onImportEntries: (event: ChangeEvent<HTMLInputElement>) => void;
   onRunR2SelfCheck: () => void;
@@ -120,7 +132,7 @@ export interface AdminAuthenticatedViewProps {
   theme: ThemeConfig;
   getTextColor: AdminTextColorGetter;
   getOperationState: AdminEntryOperationStateGetter;
-  settingsState: AdminAuthenticatedSettingsState;
+  settingsState: AdminAuthenticatedViewSettingsState;
   entriesState: AdminAuthenticatedEntriesState;
   actions: AdminAuthenticatedActions;
 }

@@ -5,17 +5,21 @@ import {
 } from '../../../src/services/publicSettingsSchema.ts';
 import type { Env } from '../_shared.ts';
 import {
+  clearSyncAccessToken,
   deleteSetting,
   getSetting,
   isPasswordConfigured,
   isPublicSettingKey,
+  isSyncAccessTokenConfigured,
   jsonResponse,
   optionsResponse,
   parseJsonBody,
   readSession,
   requireAdminSession,
+  setSyncAccessToken,
   setPasswordForScope,
   setSetting,
+  validateSyncAccessToken,
 } from '../_shared.ts';
 
 const SETTINGS_UPDATE_BODY_MAX_BYTES = 64 * 1024;
@@ -61,6 +65,13 @@ export const onRequestGet = async (context: { params: { key: string }; request: 
       return jsonResponse<Record<string, boolean>>({
         success: true,
         data: { [key]: await isPasswordConfigured(context.env.DB, 'app', context.env) },
+      });
+    }
+
+    if (key === 'sync_access_token_configured') {
+      return jsonResponse<Record<string, boolean>>({
+        success: true,
+        data: { [key]: await isSyncAccessTokenConfigured(context.env.DB, context.env) },
       });
     }
 
@@ -160,6 +171,15 @@ export const onRequestPut = async (context: { params: { key: string }; request: 
       });
     }
 
+    if (key === 'sync_access_token') {
+      const trimmedValue = validateSyncAccessToken(value);
+      await setSyncAccessToken(context.env.DB, trimmedValue);
+      return jsonResponse<ApiResponse>({
+        success: true,
+        message: '同步令牌更新成功',
+      });
+    }
+
     if (!isPublicSettingKey(key)) {
       return jsonResponse<ApiResponse>({
         success: false,
@@ -215,18 +235,22 @@ export const onRequestDelete = async (context: { params: { key: string }; reques
       return unauthorized;
     }
 
-    if (key !== 'app_password' && key !== 'admin_password') {
+    if (key !== 'app_password' && key !== 'admin_password' && key !== 'sync_access_token') {
       return jsonResponse<ApiResponse>({
         success: false,
         error: '不允许删除该设置',
       }, { status: 400 });
     }
 
-    const targetKeys = key === 'admin_password'
-      ? ['admin_password_hash', 'admin_password']
-      : ['app_password_hash', 'app_password'];
+    if (key === 'sync_access_token') {
+      await clearSyncAccessToken(context.env.DB);
+    } else {
+      const targetKeys = key === 'admin_password'
+        ? ['admin_password_hash', 'admin_password']
+        : ['app_password_hash', 'app_password'];
 
-    await Promise.all(targetKeys.map((targetKey) => deleteSetting(context.env.DB, targetKey)));
+      await Promise.all(targetKeys.map((targetKey) => deleteSetting(context.env.DB, targetKey)));
+    }
 
     if (key === 'app_password') {
       await setSetting(context.env.DB, 'app_password_enabled', 'false');

@@ -18,4 +18,5 @@ export interface PublicSettingsResponse {
 export interface AdminSettingsResponse extends PublicSettingsResponse {
   adminPasswordConfigured: boolean;
   appPasswordConfigured: boolean;
+  syncAccessTokenConfigured: boolean;
 }

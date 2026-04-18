@@ -169,12 +169,14 @@ npm run start:remote
    - 在 Cloudflare Dashboard 中创建 D1 数据库 `diary-db`
    - 记录数据库 ID，更新本地 `wrangler.toml` 的 `database_id`
    - 在 D1 数据库的 "Console" 中执行 `schema.sql` 的内容
+   - 如果你的数据库是旧版本升级到当前版本，还需要额外执行 `migrations/2026-04-18-add-entry-uuid.sql`
    - 不要在生产环境执行 `seed.dev.sql`
 
 5. **配置 Secrets**
    - 运行 `wrangler secret put SESSION_SECRET`
    - 建议：运行 `wrangler secret put ADMIN_BOOTSTRAP_PASSWORD`
    - 可选：运行 `wrangler secret put APP_BOOTSTRAP_PASSWORD`
+   - 如需 APK / 本地设备手动同步到线上：运行 `wrangler secret put SYNC_ACCESS_TOKEN`
    - 可选：运行 `wrangler secret put STATS_API_KEY`
    - 如需使用旧版 Cloudflare Images 上传：运行 `wrangler secret put IMAGES_API_TOKEN`
 

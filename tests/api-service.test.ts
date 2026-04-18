@@ -459,3 +459,149 @@ test('remote image upload falls back to base64 data urls when upload endpoint fa
     globalThis.fetch = originalFetch;
   }
 });
+
+test('local sync status tracks pending create update and delete operations', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_local', 'true');
+
+  const ApiService = await loadApiServiceClass();
+  const service = new ApiService();
+
+  await service.loginAdmin('admin123');
+  const createdEntry = await service.createEntry({
+    title: '待同步新建',
+    content: '新内容',
+  });
+
+  let syncStatus = await service.getLocalSyncStatus();
+  assert.equal(syncStatus.pendingCreates, 1);
+  assert.equal(syncStatus.totalPending, 1);
+
+  await service.markLocalEntriesSynced([createdEntry.entry_uuid!], '2026-04-18T12:00:00.000Z');
+  await service.updateEntry(createdEntry.id!, {
+    content: '同步后又修改',
+  });
+
+  syncStatus = await service.getLocalSyncStatus();
+  assert.equal(syncStatus.pendingUpdates, 1);
+
+  await service.deleteEntry(createdEntry.id!);
+
+  syncStatus = await service.getLocalSyncStatus();
+  assert.equal(syncStatus.pendingDeletes, 1);
+  assert.equal(syncStatus.visibleEntries >= 0, true);
+
+  const pendingEntries = await service.getPendingLocalSyncEntries();
+  assert.equal(pendingEntries.some((entry) => entry.sync_state === 'pending_delete'), true);
+});
+
+test('remote sync config is stored locally for apk sync', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_local', 'true');
+  localStorageMock.setItem('diary-app-authenticated', 'true');
+  localStorageMock.setItem('diary-admin-authenticated', 'true');
+
+  const ApiService = await loadApiServiceClass();
+  const service = new ApiService();
+
+  await service.saveRemoteSyncConfig({
+    baseUrl: 'https://diary.example.com/',
+    syncToken: ' remote-sync-token ',
+  });
+
+  const config = await service.getRemoteSyncConfig();
+  assert.equal(config.baseUrl, 'https://diary.example.com');
+  assert.equal(config.syncToken, 'remote-sync-token');
+});
+
+test('syncLocalEntriesToRemote pushes pending local entries and replaces local snapshot from remote', async () => {
+  localStorageMock.clear();
+  localStorageMock.setItem('diary_force_local', 'true');
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input, init) => {
+    const url = typeof input === 'string' ? input : input.url;
+
+    if (url !== 'https://diary.example.com/api/sync') {
+      throw new Error(`Unexpected fetch URL in test: ${url}`);
+    }
+
+    const parsedBody = JSON.parse(String(init?.body ?? '{}')) as { entries?: Array<{ title?: string; sync_state?: string }> };
+    assert.equal(new Headers(init?.headers).get('X-Sync-Token'), 'remote-sync-token');
+    assert.equal(Array.isArray(parsedBody.entries), true);
+    assert.equal(parsedBody.entries?.length, 1);
+    assert.equal(parsedBody.entries?.[0]?.title, '待同步日记');
+    assert.equal(parsedBody.entries?.[0]?.sync_state, 'pending_create');
+
+    return jsonResponse({
+      success: true,
+      data: {
+        pushedCount: 1,
+        deletedCount: 0,
+        syncedAt: '2026-04-18T13:00:00.000Z',
+        entries: [
+          {
+            id: 101,
+            entry_uuid: 'remote-entry-101',
+            title: '云端已有',
+            content: '远端内容',
+            content_type: 'markdown',
+            mood: 'neutral',
+            weather: 'unknown',
+            images: [],
+            tags: [],
+            hidden: false,
+            created_at: '2026-04-18T09:00:00.000Z',
+            updated_at: '2026-04-18T09:00:00.000Z',
+          },
+          {
+            id: 102,
+            title: '待同步日记',
+            content: '本地内容',
+            content_type: 'markdown',
+            mood: 'neutral',
+            weather: 'unknown',
+            images: [],
+            tags: [],
+            hidden: false,
+            entry_uuid: 'synced-local-entry',
+            created_at: '2026-04-18T12:00:00.000Z',
+            updated_at: '2026-04-18T12:00:00.000Z',
+          },
+        ],
+      },
+    });
+  };
+
+  try {
+    const ApiService = await loadApiServiceClass();
+    const service = new ApiService();
+    await service.loginAdmin('admin123');
+    await service.saveRemoteSyncConfig({
+      baseUrl: 'https://diary.example.com',
+      syncToken: 'remote-sync-token',
+    });
+    const createdEntry = await service.createEntry({
+      title: '待同步日记',
+      content: '本地内容',
+    });
+
+    const syncResult = await service.syncLocalEntriesToRemote();
+    assert.equal(syncResult.pushedCount, 1);
+    assert.equal(syncResult.pendingCount, 1);
+    assert.equal(syncResult.remoteCount, 2);
+
+    const allEntries = await service.getAllEntries();
+    assert.equal(allEntries.length, 2);
+    assert.equal(allEntries[0]?.title, '云端已有');
+    assert.equal(allEntries[1]?.title, '待同步日记');
+    assert.equal(allEntries[1]?.entry_uuid, 'synced-local-entry');
+    assert.equal(allEntries.some((entry) => entry.entry_uuid === createdEntry.entry_uuid), false);
+
+    const syncStatus = await service.getLocalSyncStatus();
+    assert.equal(syncStatus.totalPending, 0);
+    assert.equal(syncStatus.lastSyncedAt, '2026-04-18T13:00:00.000Z');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

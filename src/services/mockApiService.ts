@@ -7,6 +7,17 @@ import {
   isStoredBooleanString,
   isPublicBooleanSettingKey,
 } from './publicSettingsSchema.ts';
+import {
+  buildDiarySyncStatus,
+  createLocallyCreatedDiaryEntry,
+  isDiaryEntryDeleted,
+  listPendingSyncEntries,
+  markDiaryEntriesSynced,
+  markDiaryEntryDeletedLocally,
+  markDiaryEntryUpdatedLocally,
+  normalizeDiaryEntry,
+  type DiarySyncStatus,
+} from './entrySync.ts';
 
 const DEFAULT_APP_TIME_ZONE = 'Asia/Shanghai';
 
@@ -68,11 +79,18 @@ export class MockApiService {
   });
 
   private async getStoredEntries(): Promise<DiaryEntry[]> {
-    return this.localDataStore.getEntries(() => this.getDefaultEntries());
+    const storedEntries = await this.localDataStore.getEntries(() => this.getDefaultEntries());
+    const normalizedEntries = storedEntries.map(normalizeDiaryEntry);
+
+    if (JSON.stringify(storedEntries) !== JSON.stringify(normalizedEntries)) {
+      await this.localDataStore.saveEntries(normalizedEntries);
+    }
+
+    return normalizedEntries;
   }
 
   private async saveEntries(entries: DiaryEntry[]): Promise<void> {
-    await this.localDataStore.saveEntries(entries);
+    await this.localDataStore.saveEntries(entries.map(normalizeDiaryEntry));
   }
 
   private async getStoredSettings(): Promise<Record<string, string>> {
@@ -156,6 +174,7 @@ export class MockApiService {
     return [
       {
         id: 1,
+        entry_uuid: 'demo-entry-1',
         title: '公园散步的美好时光',
         content: '今天天气很好，和朋友一起去**公园散步**，心情特别愉快。\n\n看到了很多美丽的花朵 🌸，还遇到了可爱的小狗 🐕。和朋友聊了很多有趣的话题。\n\n> 生活中的小美好总是让人感到幸福',
         content_type: 'markdown',
@@ -165,10 +184,14 @@ export class MockApiService {
         images: [],
         created_at: new Date(Date.now() - 86400000).toISOString(),
         updated_at: new Date(Date.now() - 86400000).toISOString(),
+        last_synced_at: new Date(Date.now() - 86400000).toISOString(),
+        deleted_at: null,
+        sync_state: 'synced',
         hidden: false,
       },
       {
         id: 2,
+        entry_uuid: 'demo-entry-2',
         title: '工作中的成长与收获',
         content: '今天在工作中遇到了一些挑战，但通过**团队合作**成功解决了问题。\n\n学到了很多新的技术知识：\n- React Hook 的高级用法\n- TypeScript 类型推导\n- 团队协作的重要性\n\n感觉自己又成长了一些 💪',
         content_type: 'markdown',
@@ -178,10 +201,14 @@ export class MockApiService {
         images: [],
         created_at: new Date(Date.now() - 172800000).toISOString(),
         updated_at: new Date(Date.now() - 172800000).toISOString(),
+        last_synced_at: new Date(Date.now() - 172800000).toISOString(),
+        deleted_at: null,
+        sync_state: 'synced',
         hidden: false,
       },
       {
         id: 3,
+        entry_uuid: 'demo-entry-3',
         title: '雨天的宁静思考',
         content: '下雨天总是让人感到宁静，坐在窗边听雨声，思考人生的意义。\n\n今天读了《人生的智慧》，收获颇丰。\n\n*雨声滴答，思绪万千...*\n\n有时候慢下来，静静地感受生活，也是一种幸福。',
         content_type: 'markdown',
@@ -191,6 +218,9 @@ export class MockApiService {
         images: [],
         created_at: new Date(Date.now() - 259200000).toISOString(),
         updated_at: new Date(Date.now() - 259200000).toISOString(),
+        last_synced_at: new Date(Date.now() - 259200000).toISOString(),
+        deleted_at: null,
+        sync_state: 'synced',
         hidden: false,
       },
     ];
@@ -270,7 +300,7 @@ export class MockApiService {
       const entries = await this.getStoredEntries();
       const readableEntries = await Promise.all(entries.map(async (entry) => ({
         entry,
-        canRead: await this.canReadEntry(entry),
+        canRead: !isDiaryEntryDeleted(entry) && await this.canReadEntry(entry),
       })));
 
       return readableEntries.filter((item) => item.canRead).map((item) => item.entry);
@@ -281,7 +311,7 @@ export class MockApiService {
     return this.runMockRequest(50, async () => {
       const entries = await this.getStoredEntries();
       const entry = entries.find((item) => item.id === id) || null;
-      return entry && await this.canReadEntry(entry) ? entry : null;
+      return entry && !isDiaryEntryDeleted(entry) && await this.canReadEntry(entry) ? entry : null;
     });
   }
 
@@ -289,7 +319,7 @@ export class MockApiService {
     return this.runMockRequest(100, async () => {
       const entries = await this.getStoredEntries();
       const now = new Date().toISOString();
-      const newEntry: DiaryEntry = {
+      const newEntry: DiaryEntry = createLocallyCreatedDiaryEntry({
         ...entry,
         id: await this.generateId(),
         created_at: now,
@@ -301,7 +331,7 @@ export class MockApiService {
         images: entry.images || [],
         location: entry.location || null,
         hidden: entry.hidden || false,
-      };
+      });
 
       entries.unshift(newEntry);
       await this.saveEntries(entries);
@@ -341,16 +371,14 @@ export class MockApiService {
       const entries = await this.getStoredEntries();
       const index = entries.findIndex((entry) => entry.id === id);
 
-      if (index === -1) {
+      if (index === -1 || isDiaryEntryDeleted(entries[index]!)) {
         throw new Error('日记不存在');
       }
 
-      const updatedEntry: DiaryEntry = {
-        ...entries[index],
+      const updatedEntry = markDiaryEntryUpdatedLocally(entries[index]!, {
         ...updates,
         id,
-        updated_at: new Date().toISOString(),
-      };
+      });
 
       entries[index] = updatedEntry;
       await this.saveEntries(entries);
@@ -361,13 +389,22 @@ export class MockApiService {
   async deleteEntry(id: number): Promise<void> {
     return this.runMockRequest(100, async () => {
       const entries = await this.getStoredEntries();
-      const filteredEntries = entries.filter((entry) => entry.id !== id);
+      const index = entries.findIndex((entry) => entry.id === id);
 
-      if (filteredEntries.length === entries.length) {
+      if (index === -1 || isDiaryEntryDeleted(entries[index]!)) {
         throw new Error('日记不存在');
       }
 
-      await this.saveEntries(filteredEntries);
+      const targetEntry = entries[index]!;
+
+      if (targetEntry.sync_state === 'pending_create' && !targetEntry.last_synced_at) {
+        const filteredEntries = entries.filter((entry) => entry.id !== id);
+        await this.saveEntries(filteredEntries);
+        return;
+      }
+
+      entries[index] = markDiaryEntryDeletedLocally(targetEntry);
+      await this.saveEntries(entries);
     }, { requireAdmin: true });
   }
 
@@ -378,12 +415,15 @@ export class MockApiService {
       let nextId = Math.max(0, ...existingEntries.map((entry) => entry.id || 0)) + 1;
 
       for (const entry of newEntries) {
-        const newEntry: DiaryEntry = {
+        const newEntry: DiaryEntry = normalizeDiaryEntry({
           ...entry,
           id: nextId++,
           created_at: entry.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
+          updated_at: entry.updated_at || new Date().toISOString(),
+          sync_state: entry.sync_state || 'synced',
+          last_synced_at: entry.last_synced_at ?? entry.updated_at ?? entry.created_at ?? new Date().toISOString(),
+          deleted_at: entry.deleted_at ?? null,
+        });
         importedEntries.push(newEntry);
       }
 
@@ -413,10 +453,13 @@ export class MockApiService {
       for (const updatedEntry of updatedEntries) {
         const index = entries.findIndex((entry) => entry.id === updatedEntry.id);
         if (index !== -1) {
-          const updated: DiaryEntry = {
+          const updated: DiaryEntry = normalizeDiaryEntry({
+            ...entries[index],
             ...updatedEntry,
-            updated_at: new Date().toISOString(),
-          };
+            updated_at: updatedEntry.updated_at || new Date().toISOString(),
+            sync_state: updatedEntry.sync_state || 'synced',
+            last_synced_at: updatedEntry.last_synced_at ?? updatedEntry.updated_at ?? new Date().toISOString(),
+          });
           entries[index] = updated;
           results.push(updated);
         }
@@ -539,6 +582,7 @@ export class MockApiService {
         ...publicSettings,
         adminPasswordConfigured: Boolean(settings.admin_password),
         appPasswordConfigured: Boolean(settings.app_password),
+        syncAccessTokenConfigured: Boolean(settings.sync_access_token),
       };
     }, { requireAdmin: true });
   }
@@ -552,7 +596,7 @@ export class MockApiService {
         throw new Error('需要管理员会话或有效的统计 API 密钥');
       }
 
-      const entries = (await this.getStoredEntries()).filter((entry) => isAdminAuthenticated || hasApiKey || !entry.hidden);
+      const entries = (await this.getStoredEntries()).filter((entry) => !isDiaryEntryDeleted(entry) && (isAdminAuthenticated || hasApiKey || !entry.hidden));
       const { consecutive_days, current_streak_start } = this.calculateConsecutiveDays(entries);
       const total_days_with_entries = this.calculateTotalDaysWithEntries(entries);
       const total_entries = entries.length;
@@ -571,5 +615,61 @@ export class MockApiService {
         current_streak_start,
       };
     });
+  }
+
+  async getLocalSyncStatus(): Promise<DiarySyncStatus> {
+    return this.runMockRequest(30, async () => buildDiarySyncStatus(await this.getStoredEntries()));
+  }
+
+  async getPendingLocalSyncEntries(): Promise<DiaryEntry[]> {
+    return this.runMockRequest(30, async () => listPendingSyncEntries(await this.getStoredEntries()));
+  }
+
+  async markLocalEntriesSynced(entryUuids: string[], syncedAt?: string): Promise<void> {
+    return this.runMockRequest(30, async () => {
+      const entries = await this.getStoredEntries();
+      const nextEntries = markDiaryEntriesSynced(entries, entryUuids, syncedAt);
+      await this.saveEntries(nextEntries);
+    });
+  }
+
+  async applyRemoteSyncSnapshot(entries: DiaryEntry[], syncedAt: string): Promise<void> {
+    return this.runMockRequest(30, async () => {
+      const normalizedEntries = entries.map((entry) => {
+        const normalizedEntry = normalizeDiaryEntry(entry);
+        return {
+          ...normalizedEntry,
+          deleted_at: null,
+          sync_state: 'synced' as const,
+          last_synced_at: syncedAt,
+        };
+      });
+
+      await this.saveEntries(normalizedEntries);
+    });
+  }
+
+  async getRemoteSyncConfig(): Promise<{ baseUrl: string; syncToken: string }> {
+    return this.runMockRequest(30, async () => {
+      const settings = await this.getStoredSettings();
+      if (settings.remote_sync_admin_password) {
+        delete settings.remote_sync_admin_password;
+        await this.saveSettings(settings);
+      }
+      return {
+        baseUrl: settings.remote_sync_base_url ?? '',
+        syncToken: settings.remote_sync_token ?? '',
+      };
+    }, { requireAdmin: true });
+  }
+
+  async saveRemoteSyncConfig(config: { baseUrl: string; syncToken: string }): Promise<void> {
+    return this.runMockRequest(30, async () => {
+      await this.updateStoredSettings((settings) => {
+        settings.remote_sync_base_url = config.baseUrl.trim();
+        settings.remote_sync_token = config.syncToken;
+        delete settings.remote_sync_admin_password;
+      });
+    }, { requireAdmin: true });
   }
 }

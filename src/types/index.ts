@@ -24,8 +24,16 @@ export interface LocationInfo {
   details?: LocationDetails;
 }
 
+export type EntrySyncState =
+  | 'synced'
+  | 'pending_create'
+  | 'pending_update'
+  | 'pending_delete'
+  | 'conflict';
+
 export interface DiaryEntry {
   id?: number;
+  entry_uuid?: string;
   title: string;
   content: string;
   content_type?: 'markdown' | 'plain';
@@ -35,6 +43,9 @@ export interface DiaryEntry {
   location?: LocationInfo | null;
   created_at?: string;
   updated_at?: string;
+  last_synced_at?: string | null;
+  deleted_at?: string | null;
+  sync_state?: EntrySyncState;
   tags?: string[];
   hidden?: boolean;
 }

@@ -1,4 +1,16 @@
-import type { DiaryEntry, LocationDetails, LocationInfo, POI } from '../types/index.ts';
+import type { DiaryEntry, EntrySyncState, LocationDetails, LocationInfo, POI } from '../types/index.ts';
+
+const validEntrySyncStates = new Set<EntrySyncState>([
+  'synced',
+  'pending_create',
+  'pending_update',
+  'pending_delete',
+  'conflict',
+]);
+
+function isEntrySyncState(value: unknown): value is EntrySyncState {
+  return typeof value === 'string' && validEntrySyncStates.has(value as EntrySyncState);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -89,6 +101,22 @@ function validateImportedEntry(entry: unknown, index: number): asserts entry is 
 
   if (!isOptionalBoolean(entry.hidden)) {
     throw new Error(`第 ${index + 1} 条导入数据的隐藏状态无效`);
+  }
+
+  if (entry.entry_uuid !== undefined && typeof entry.entry_uuid !== 'string') {
+    throw new Error(`第 ${index + 1} 条导入数据的同步标识无效`);
+  }
+
+  if (entry.sync_state !== undefined && !isEntrySyncState(entry.sync_state)) {
+    throw new Error(`第 ${index + 1} 条导入数据的同步状态无效`);
+  }
+
+  if (entry.last_synced_at !== undefined && entry.last_synced_at !== null && (typeof entry.last_synced_at !== 'string' || Number.isNaN(Date.parse(entry.last_synced_at)))) {
+    throw new Error(`第 ${index + 1} 条导入数据的最后同步时间无效`);
+  }
+
+  if (entry.deleted_at !== undefined && entry.deleted_at !== null && (typeof entry.deleted_at !== 'string' || Number.isNaN(Date.parse(entry.deleted_at)))) {
+    throw new Error(`第 ${index + 1} 条导入数据的删除时间无效`);
   }
 
   if (entry.created_at !== undefined && (typeof entry.created_at !== 'string' || Number.isNaN(Date.parse(entry.created_at)))) {

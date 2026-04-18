@@ -3,6 +3,7 @@
 
 CREATE TABLE IF NOT EXISTS diary_entries (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_uuid TEXT UNIQUE,
     title TEXT NOT NULL,
     content TEXT NOT NULL,
     content_type TEXT DEFAULT 'markdown',
@@ -26,4 +27,5 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 CREATE INDEX IF NOT EXISTS idx_diary_entries_created_at ON diary_entries(created_at);
 CREATE INDEX IF NOT EXISTS idx_diary_entries_mood ON diary_entries(mood);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_diary_entries_entry_uuid ON diary_entries(entry_uuid);
 CREATE INDEX IF NOT EXISTS idx_app_settings_key ON app_settings(setting_key);

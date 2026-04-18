@@ -1,6 +1,15 @@
 import type { ApiResponse, DiaryEntry } from '../../../src/types/index.ts';
 import type { Env } from '../_shared.ts';
-import { formatEntry, jsonResponse, normalizeEntryInput, optionsResponse, parseJsonBody, readSession, requireAdminSession } from '../_shared.ts';
+import {
+  ensureEntryUuidForRow,
+  formatEntry,
+  jsonResponse,
+  normalizeEntryInput,
+  optionsResponse,
+  parseJsonBody,
+  readSession,
+  requireAdminSession,
+} from '../_shared.ts';
 
 type BatchImportRequest = {
   entries?: DiaryEntry[];
@@ -86,6 +95,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
       const { data: normalizedEntry, error } = normalizeEntryInput(entry, {
         requireContent: true,
         includeCreatedAt: true,
+        includeEntryUuid: true,
       });
 
       if (!normalizedEntry) {
@@ -105,10 +115,11 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
     const importedEntries: DiaryEntry[] = [];
     for (const normalizedEntry of normalizedEntries) {
       const insertedEntry = await context.env.DB.prepare(`
-        INSERT INTO diary_entries (title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+        INSERT INTO diary_entries (entry_uuid, title, content, content_type, mood, weather, images, location, tags, hidden, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         RETURNING *
       `).bind(
+        normalizedEntry.entry_uuid,
         normalizedEntry.title,
         normalizedEntry.content,
         normalizedEntry.content_type,
@@ -122,7 +133,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
       ).first<Record<string, unknown>>();
 
       if (insertedEntry) {
-        importedEntries.push(formatEntry(insertedEntry));
+        importedEntries.push(formatEntry(await ensureEntryUuidForRow(context.env.DB, insertedEntry)));
       }
     }
 
@@ -190,6 +201,7 @@ export const onRequestPut = async (context: { request: Request; env: Env }): Pro
       const { data: normalizedEntry, error } = normalizeEntryInput(entry, {
         requireContent: true,
         includeCreatedAt: true,
+        includeEntryUuid: true,
       });
 
       if (!normalizedEntry) {
@@ -223,6 +235,7 @@ export const onRequestPut = async (context: { request: Request; env: Env }): Pro
             location = ?,
             tags = ?,
             hidden = ?,
+            entry_uuid = ?,
             created_at = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = ?
@@ -237,12 +250,13 @@ export const onRequestPut = async (context: { request: Request; env: Env }): Pro
         normalizedUpdate.entry.location,
         normalizedUpdate.entry.tags,
         normalizedUpdate.entry.hidden,
+        normalizedUpdate.entry.entry_uuid,
         normalizedUpdate.entry.created_at,
         normalizedUpdate.id
       ).first<Record<string, unknown>>();
 
       if (updatedEntry) {
-        updatedEntries.push(formatEntry(updatedEntry));
+        updatedEntries.push(formatEntry(await ensureEntryUuidForRow(context.env.DB, updatedEntry)));
       }
     }
 
