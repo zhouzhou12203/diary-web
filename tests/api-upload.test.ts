@@ -197,6 +197,34 @@ test('image upload accepts file-like values from runtime form data parsing', asy
   assert.match(payload.data?.url ?? '', /^https:\/\/example\.com\/api\/images\/diary%2Fimage-/);
 });
 
+test('image upload accepts base64 json payloads and stores them in r2', async () => {
+  const bucket = new MockR2Bucket();
+  const env = createEnv({
+    IMAGES_BUCKET: bucket,
+  });
+  const adminCookie = await buildSessionCookie('admin', env);
+
+  const response = await uploadImage({
+    request: new Request('https://example.com/api/uploads/image', {
+      method: 'POST',
+      headers: {
+        Cookie: adminCookie,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        filename: 'fallback.png',
+      }),
+    }),
+    env,
+  });
+
+  assert.equal(response.status, 200);
+  const payload = await parseJson<{ success: boolean; data?: { url: string } }>(response);
+  assert.equal(payload.success, true);
+  assert.match(payload.data?.url ?? '', /^https:\/\/example\.com\/api\/images\/diary%2Fimage-/);
+});
+
 test('image upload stores file in r2 and returns local image URL when bucket binding exists', async () => {
   const bucket = new MockR2Bucket();
   const env = createEnv({

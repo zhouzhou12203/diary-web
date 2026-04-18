@@ -3,6 +3,7 @@ import type { Env } from '../_shared.ts';
 import {
   jsonResponse,
   optionsResponse,
+  parseJsonBody,
   readSession,
   requireAdminSession,
 } from '../_shared.ts';
@@ -40,7 +41,13 @@ type UploadedFile = {
   arrayBuffer: () => Promise<ArrayBuffer>;
 };
 
+type JsonImageUploadRequest = {
+  dataUrl?: string;
+  filename?: string;
+};
+
 const MAX_IMAGE_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_JSON_BODY_BYTES = 15 * 1024 * 1024;
 const DEFAULT_IMAGE_VARIANT = 'public';
 const R2_IMAGE_KEY_PREFIX = 'diary';
 const DEFAULT_IMAGE_CONTENT_TYPE = 'application/octet-stream';
@@ -233,6 +240,71 @@ function extractUploadedFile(formData: FormData): UploadedFile | null {
   return null;
 }
 
+function decodeBase64ToBytes(base64Value: string) {
+  const binary = atob(base64Value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return bytes;
+}
+
+function createUploadedFileFromDataUrl(dataUrl: string, filename?: string): UploadedFile {
+  const match = dataUrl.match(/^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\r\n]+)$/i);
+
+  if (!match) {
+    throw new Error('dataUrl 不是有效的 base64 图片');
+  }
+
+  const contentType = match[1] || DEFAULT_IMAGE_CONTENT_TYPE;
+  const base64Payload = match[2] || '';
+  const bytes = decodeBase64ToBytes(base64Payload.replace(/\s+/g, ''));
+
+  return {
+    name: filename?.trim() || `diary-image-${Date.now()}.${sanitizeFileExtension('', contentType)}`,
+    type: contentType,
+    size: bytes.byteLength,
+    arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
+  };
+}
+
+async function readUploadedFile(request: Request): Promise<UploadedFile> {
+  const contentType = request.headers.get('Content-Type')?.toLowerCase() ?? '';
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await request.formData();
+    const file = extractUploadedFile(formData);
+
+    if (!file) {
+      throw new Error('缺少图片文件，请检查上传表单是否包含图片文件');
+    }
+
+    return file;
+  }
+
+  if (contentType.includes('application/json')) {
+    const { data, error, status } = await parseJsonBody<JsonImageUploadRequest>(request, {
+      requireObject: true,
+      requireJsonContentType: true,
+      maxBodyBytes: MAX_IMAGE_JSON_BODY_BYTES,
+    });
+
+    if (!data) {
+      throw Object.assign(new Error(error ?? '图片上传请求体无效'), { status: status ?? 400 });
+    }
+
+    if (typeof data.dataUrl !== 'string' || !data.dataUrl.trim()) {
+      throw new Error('缺少 base64 图片数据');
+    }
+
+    return createUploadedFileFromDataUrl(data.dataUrl, data.filename);
+  }
+
+  throw Object.assign(new Error('图片上传请求必须使用 multipart/form-data 或 application/json'), { status: 415 });
+}
+
 export const onRequestOptions = async (): Promise<Response> => optionsResponse();
 
 export const onRequestPost = async (context: { request: Request; env: Env }): Promise<Response> => {
@@ -241,15 +313,6 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
 
   if (unauthorized) {
     return unauthorized;
-  }
-
-  const contentType = context.request.headers.get('Content-Type')?.toLowerCase() ?? '';
-
-  if (!contentType.includes('multipart/form-data')) {
-    return jsonResponse<ApiResponse>({
-      success: false,
-      error: '图片上传请求必须使用 multipart/form-data',
-    }, { status: 415 });
   }
 
   const uploadTarget = getUploadTarget(context.env);
@@ -262,15 +325,7 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
   }
 
   try {
-    const formData = await context.request.formData();
-    const file = extractUploadedFile(formData);
-
-    if (!file) {
-      return jsonResponse<ApiResponse>({
-        success: false,
-        error: '缺少图片文件，请检查上传表单是否包含图片文件',
-      }, { status: 400 });
-    }
+    const file = await readUploadedFile(context.request);
 
     if (!file.type.startsWith('image/')) {
       return jsonResponse<ApiResponse>({
@@ -305,9 +360,13 @@ export const onRequestPost = async (context: { request: Request; env: Env }): Pr
       message: '图片上传成功',
     });
   } catch (error) {
+    const status = typeof error === 'object' && error !== null && 'status' in error && typeof error.status === 'number'
+      ? error.status
+      : 500;
+
     return jsonResponse<ApiResponse>({
       success: false,
       error: error instanceof Error ? error.message : '图片上传失败',
-    }, { status: 500 });
+    }, { status });
   }
 };

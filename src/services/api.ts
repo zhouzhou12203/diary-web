@@ -255,14 +255,41 @@ export class ApiService {
             url: payload.url,
             storage: inferUploadStorage(payload.url),
           };
-        } catch (error) {
-          debugWarn('远程图片上传失败，回退为内嵌 base64 图片:', error);
-          const fallbackUrl = await convertFileToDataUrl(file);
-          return {
-            url: fallbackUrl,
-            storage: 'embedded',
-            warning: error instanceof Error ? error.message : '上传接口失败',
-          };
+        } catch (multipartError) {
+          try {
+            const dataUrl = await convertFileToDataUrl(file);
+            const payload = await this.requestRemoteData<{ url: string }>('/uploads/image', '图片上传失败', {
+              method: 'POST',
+              body: JSON.stringify({
+                dataUrl,
+                filename: file.name,
+              }),
+            });
+
+            if (!payload.url) {
+              throw new Error('图片上传响应无效');
+            }
+
+            return {
+              url: payload.url,
+              storage: inferUploadStorage(payload.url),
+              warning: multipartError instanceof Error ? multipartError.message : '文件表单上传失败，已改用 base64 上传',
+            };
+          } catch (jsonFallbackError) {
+            debugWarn('远程图片上传失败，回退为内嵌 base64 图片:', jsonFallbackError);
+            const fallbackUrl = await convertFileToDataUrl(file);
+            const warningMessage = jsonFallbackError instanceof Error
+              ? jsonFallbackError.message
+              : multipartError instanceof Error
+                ? multipartError.message
+                : '上传接口失败';
+
+            return {
+              url: fallbackUrl,
+              storage: 'embedded',
+              warning: warningMessage,
+            };
+          }
         }
       },
     });

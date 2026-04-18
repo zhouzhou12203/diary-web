@@ -419,14 +419,27 @@ test('remote image upload falls back to base64 data urls when upload endpoint fa
   localStorageMock.clear();
 
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (input) => {
+  let uploadAttempts = 0;
+  globalThis.fetch = async (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
 
     if (url.endsWith('/api/uploads/image')) {
+      uploadAttempts += 1;
+
+      if (uploadAttempts === 1) {
+        return jsonResponse({
+          success: false,
+          error: '缺少图片文件，请检查上传表单是否包含图片文件',
+        }, 400);
+      }
+
+      const parsedBody = init?.body ? JSON.parse(String(init.body)) as { dataUrl?: string } : {};
       return jsonResponse({
-        success: false,
-        error: '缺少图片文件，请检查上传表单是否包含图片文件',
-      }, 400);
+        success: true,
+        data: {
+          url: parsedBody.dataUrl ? 'https://example.com/api/images/diary%2Fjson-fallback.png' : '',
+        },
+      });
     }
 
     throw new Error(`Unexpected fetch URL in test: ${url}`);
@@ -437,8 +450,8 @@ test('remote image upload falls back to base64 data urls when upload endpoint fa
     const service = new ApiService();
     const uploadResult = await service.uploadImageWithStatus(new File(['hello'], 'a.png', { type: 'image/png' }));
 
-    assert.match(uploadResult.url, /^data:image\/png;base64,/);
-    assert.equal(uploadResult.storage, 'embedded');
+    assert.equal(uploadResult.url, 'https://example.com/api/images/diary%2Fjson-fallback.png');
+    assert.equal(uploadResult.storage, 'r2');
     assert.match(uploadResult.warning ?? '', /缺少图片文件/);
   } finally {
     globalThis.fetch = originalFetch;
