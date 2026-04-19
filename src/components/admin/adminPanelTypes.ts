@@ -58,6 +58,7 @@ export type AdminTextColorGetter = (type?: 'primary' | 'secondary') => string;
 
 export interface AdminLoginViewProps {
   accessProfile: AdminAccessProfile | null;
+  isNativeApp: boolean;
   isLoadingAccessProfile: boolean;
   showRemoteBindingForm: boolean;
   remoteSyncBaseUrl: string;
@@ -110,6 +111,7 @@ export interface AdminAuthenticatedSettingsState {
 
 export interface AdminAuthenticatedViewSettingsState extends AdminAuthenticatedSettingsState {
   accessProfile: AdminAccessProfile | null;
+  isNativeApp: boolean;
   syncStatus: DiarySyncStatus | null;
   isSyncingToRemote: boolean;
   showRemoteBindingForm: boolean;

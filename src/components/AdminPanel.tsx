@@ -58,6 +58,7 @@ export function AdminPanel({
 }: AdminPanelProps) {
   const { theme } = useThemeContext();
   const { isAdminAuthenticated, setIsAdminAuthenticated } = useAdminAuth();
+  const isNativeApp = apiService.isNativeApp();
   const [isAuthenticated, setIsAuthenticated] = useState(isAdminAuthenticated);
   const [passwordInput, setPasswordInput] = useState('');
   const [adminAccessProfile, setAdminAccessProfile] = useState<AdminAccessProfile | null>(null);
@@ -296,7 +297,7 @@ export function AdminPanel({
   };
 
   const openRemoteBindingForm = async () => {
-    if (adminAccessProfile?.mode !== 'local') {
+    if (!isNativeApp || adminAccessProfile?.mode !== 'local') {
       return;
     }
 
@@ -575,6 +576,7 @@ export function AdminPanel({
     newPassword,
     interfaceSettings,
     accessProfile: adminAccessProfile,
+    isNativeApp,
     syncStatus,
     isSyncingToRemote,
     showRemoteBindingForm,
@@ -660,6 +662,7 @@ export function AdminPanel({
         {!isAuthenticated ? (
           <AdminLoginView
             accessProfile={adminAccessProfile}
+            isNativeApp={isNativeApp}
             isLoadingAccessProfile={isLoadingAccessProfile}
             showRemoteBindingForm={showRemoteBindingForm}
             remoteSyncBaseUrl={remoteSyncBaseUrl}

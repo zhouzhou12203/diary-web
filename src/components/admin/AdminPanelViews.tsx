@@ -15,6 +15,7 @@ import type {
 
 export function AdminLoginView({
   accessProfile,
+  isNativeApp,
   isLoadingAccessProfile,
   showRemoteBindingForm,
   remoteSyncBaseUrl,
@@ -38,6 +39,7 @@ export function AdminLoginView({
 }: AdminLoginViewProps) {
   const isDarkLike = theme.mode === 'dark';
   const isLocalMode = accessProfile?.mode === 'local';
+  const canUseRemoteBinding = isNativeApp && isLocalMode;
   const requiresPassword = accessProfile?.requiresPassword ?? true;
   const remoteBound = accessProfile?.remoteBound ?? false;
 
@@ -64,14 +66,16 @@ export function AdminLoginView({
           {showRemoteBindingForm
             ? '先完成远程绑定，再用与远程一致的管理员密码进入本机管理面板'
             : isLocalMode && !requiresPassword
-              ? '当前设备未绑定远程，可直接进入本地管理。完成远程绑定后，会改为使用远程管理员密码。'
+              ? canUseRemoteBinding
+                ? '当前设备未绑定远程，可直接进入本地管理。完成远程绑定后，会改为使用远程管理员密码。'
+                : '当前环境未绑定远程，可直接进入本地管理。'
               : remoteBound
                 ? '当前设备已绑定远程，请输入与线上一致的管理员密码。若线上已改密，可直接重新绑定。'
                 : '请输入管理员密码以访问管理功能'}
         </p>
       </div>
 
-      {showRemoteBindingForm ? (
+      {canUseRemoteBinding && showRemoteBindingForm ? (
         <div
           className="space-y-3 rounded-xl border p-4"
           style={{
@@ -171,17 +175,19 @@ export function AdminLoginView({
           >
             直接进入本地管理
           </button>
-          <button
-            type="button"
-            onClick={onShowRemoteBindingForm}
-            className="w-full rounded-lg border py-3 font-medium"
-            style={{
-              borderColor: theme.colors.border,
-              color: getTextColor('primary'),
-            }}
-          >
-            绑定远程
-          </button>
+          {canUseRemoteBinding && (
+            <button
+              type="button"
+              onClick={onShowRemoteBindingForm}
+              className="w-full rounded-lg border py-3 font-medium"
+              style={{
+                borderColor: theme.colors.border,
+                color: getTextColor('primary'),
+              }}
+            >
+              绑定远程
+            </button>
+          )}
         </div>
       ) : (
         <form onSubmit={onSubmit} className="space-y-4">
@@ -224,7 +230,7 @@ export function AdminLoginView({
             >
               验证
             </button>
-            {isLocalMode && (
+            {canUseRemoteBinding && (
               <button
                 type="button"
                 onClick={onShowRemoteBindingForm}
@@ -333,6 +339,7 @@ export function AdminAuthenticatedView({
     newPassword,
     interfaceSettings,
     accessProfile,
+    isNativeApp,
     syncStatus,
     isSyncingToRemote,
     showRemoteBindingForm,
@@ -378,6 +385,7 @@ export function AdminAuthenticatedView({
         theme={theme}
         getTextColor={getTextColor}
         accessProfile={accessProfile}
+        isNativeApp={isNativeApp}
         remoteSyncBaseUrl={remoteSyncBaseUrl}
         remoteSyncToken={remoteSyncToken}
         remoteAdminPassword={remoteAdminPassword}
@@ -397,6 +405,7 @@ export function AdminAuthenticatedView({
       <PrimaryActionsSection
         settings={settings}
         theme={theme}
+        isNativeApp={isNativeApp}
         syncDescription={
           isSyncingToRemote
             ? '正在把本地改动推送到云端，请稍候。'

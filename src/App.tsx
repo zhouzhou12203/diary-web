@@ -627,27 +627,28 @@ function AppContent() {
           />
         )}
 
-        {canShowBackToLatestButton && (
-          <button
-            type="button"
-            onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-            className="fixed z-40 flex items-center gap-2 rounded-full px-4 py-3 shadow-xl transition-transform duration-200 hover:-translate-y-0.5"
-            style={{
-              right: isMobile ? 'max(12px, var(--safe-area-right))' : '24px',
-              bottom: isMobile ? 'max(16px, calc(var(--safe-area-bottom) + 12px))' : '24px',
-              backgroundColor: theme.mode === 'dark' ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)',
-              border: `1px solid ${theme.colors.border}`,
-              color: theme.colors.text,
-              backdropFilter: 'blur(12px)',
-            }}
-            aria-label="回到最新日记"
-            title="回到最新日记"
-          >
-            <ArrowUp className="h-4 w-4" />
-            <span className="text-sm font-medium">最新</span>
-          </button>
-        )}
       </div>
+
+      {canShowBackToLatestButton && (
+        <button
+          type="button"
+          onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+          className="fixed z-40 flex items-center gap-2 rounded-full px-4 py-3 shadow-xl transition-transform duration-200 hover:-translate-y-0.5"
+          style={{
+            right: isMobile ? 'max(12px, var(--safe-area-right))' : '24px',
+            bottom: isMobile ? 'max(16px, calc(var(--safe-area-bottom) + 12px))' : '24px',
+            backgroundColor: theme.mode === 'dark' ? 'rgba(15, 23, 42, 0.92)' : 'rgba(255, 255, 255, 0.96)',
+            border: `1px solid ${theme.colors.border}`,
+            color: theme.colors.text,
+            backdropFilter: 'blur(12px)',
+          }}
+          aria-label="回到最新日记"
+          title="回到最新日记"
+        >
+          <ArrowUp className="h-4 w-4" />
+          <span className="text-sm font-medium">最新</span>
+        </button>
+      )}
     </>
   );
 }

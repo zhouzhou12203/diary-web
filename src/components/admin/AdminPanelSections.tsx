@@ -32,6 +32,7 @@ interface SettingsActionCardConfig {
 interface PrimaryActionsSectionProps {
   settings: AdminSettings;
   theme: ThemeConfig;
+  isNativeApp: boolean;
   syncDescription: string;
   isSyncingToRemote: boolean;
   showAdminPasswordAction: boolean;
@@ -48,6 +49,7 @@ interface SyncSettingsSectionProps {
   theme: ThemeConfig;
   getTextColor: AdminTextColorGetter;
   accessProfile: AdminAccessProfile | null;
+  isNativeApp: boolean;
   remoteSyncBaseUrl: string;
   remoteSyncToken: string;
   remoteAdminPassword: string;
@@ -365,6 +367,7 @@ export function SyncSettingsSection({
   theme,
   getTextColor,
   accessProfile,
+  isNativeApp,
   remoteSyncBaseUrl,
   remoteSyncToken,
   remoteAdminPassword,
@@ -380,7 +383,7 @@ export function SyncSettingsSection({
   onBindRemoteSubmit,
   onUnbindRemote,
 }: SyncSettingsSectionProps) {
-  if (accessProfile?.mode !== 'local') {
+  if (!isNativeApp || accessProfile?.mode !== 'local') {
     return null;
   }
 
@@ -464,6 +467,7 @@ export function SyncSettingsSection({
 export function PrimaryActionsSection({
   settings,
   theme,
+  isNativeApp,
   syncDescription,
   isSyncingToRemote,
   showAdminPasswordAction,
@@ -476,12 +480,6 @@ export function PrimaryActionsSection({
   onToggleWelcomePage,
 }: PrimaryActionsSectionProps) {
   const actionCards: SettingsActionCardConfig[] = [
-    {
-      key: 'sync-remote',
-      title: isSyncingToRemote ? '正在同步到云端' : '手动同步到云端',
-      description: syncDescription,
-      onClick: onSyncToRemote,
-    },
     {
       key: 'export',
       title: '导出数据',
@@ -522,8 +520,17 @@ export function PrimaryActionsSection({
     },
   ];
 
+  if (isNativeApp) {
+    actionCards.unshift({
+      key: 'sync-remote',
+      title: isSyncingToRemote ? '正在同步到云端' : '手动同步到云端',
+      description: syncDescription,
+      onClick: onSyncToRemote,
+    });
+  }
+
   if (showAdminPasswordAction) {
-    actionCards.splice(3, 0, {
+    actionCards.splice(isNativeApp ? 3 : 2, 0, {
       key: 'password',
       title: '密码设置',
       description: '修改管理密码',

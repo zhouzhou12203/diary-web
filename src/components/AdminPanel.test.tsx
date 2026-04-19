@@ -86,6 +86,7 @@ describe('AdminPanel', () => {
       baseUrl: '',
       syncToken: '',
     });
+    vi.spyOn(apiService, 'isNativeApp').mockReturnValue(false);
   });
 
   afterEach(() => {
@@ -421,6 +422,7 @@ describe('AdminPanel', () => {
   });
 
   it('supports rebinding remote admin credentials from the login view', async () => {
+    vi.spyOn(apiService, 'isNativeApp').mockReturnValue(true);
     vi.spyOn(apiService, 'getAdminAccessProfile').mockResolvedValue({
       mode: 'local',
       requiresPassword: true,
@@ -478,5 +480,32 @@ describe('AdminPanel', () => {
         isAdminAuthenticated: true,
       });
     });
+  });
+
+  it('does not show apk remote binding actions on web admin panel', async () => {
+    vi.spyOn(apiService, 'getAdminAccessProfile').mockResolvedValue({
+      mode: 'local',
+      requiresPassword: false,
+      remoteBound: false,
+      remoteSyncConfigured: false,
+      remoteSyncBaseUrl: '',
+    });
+    const user = userEvent.setup();
+
+    renderWithProviders(
+      <AdminPanel
+        isOpen={true}
+        onClose={vi.fn()}
+        entries={[]}
+        onEntriesUpdate={vi.fn()}
+      />
+    );
+
+    expect(await screen.findByRole('button', { name: '直接进入本地管理' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '绑定远程' })).not.toBeInTheDocument();
+    expect(screen.queryByText('APK 远程绑定')).not.toBeInTheDocument();
+    expect(screen.queryByText('手动同步到云端')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '直接进入本地管理' }));
   });
 });

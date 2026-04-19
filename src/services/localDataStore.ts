@@ -47,6 +47,30 @@ function readStorageFlag(key: string) {
   return hasLocalStorage() && localStorage.getItem(key) === 'true';
 }
 
+function isQuotaExceededError(error: unknown) {
+  if (error instanceof DOMException) {
+    return error.name === 'QuotaExceededError' || error.name === 'NS_ERROR_DOM_QUOTA_REACHED';
+  }
+
+  if (error instanceof Error) {
+    return /quota|storage.*full|exceeded/i.test(error.message);
+  }
+
+  return false;
+}
+
+function writeStorageItem(key: string, value: string, quotaMessage: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    if (isQuotaExceededError(error)) {
+      throw new Error(quotaMessage);
+    }
+
+    throw error;
+  }
+}
+
 function isSessionState(value: unknown): value is SessionState {
   return isRecord(value) &&
     typeof value.isAuthenticated === 'boolean' &&
@@ -198,7 +222,11 @@ export class LocalDataStore {
     }
 
     if (hasLocalStorage()) {
-      localStorage.setItem(this.storageKeys.entries, JSON.stringify(entries));
+      writeStorageItem(
+        this.storageKeys.entries,
+        JSON.stringify(entries),
+        '浏览器本地存储空间已满，当前 Web 端无法继续保存这批日记。请减少导入体积、清理本地数据，或改用 APK 导入/同步。'
+      );
     }
   }
 
@@ -219,7 +247,11 @@ export class LocalDataStore {
     }
 
     if (hasLocalStorage()) {
-      localStorage.setItem(this.storageKeys.settings, JSON.stringify(settings));
+      writeStorageItem(
+        this.storageKeys.settings,
+        JSON.stringify(settings),
+        '浏览器本地存储空间已满，当前 Web 端无法保存设置。请清理浏览器站点数据后重试。'
+      );
     }
   }
 
@@ -250,8 +282,16 @@ export class LocalDataStore {
       return;
     }
 
-    localStorage.setItem(this.storageKeys.appAuth, String(session.isAuthenticated));
-    localStorage.setItem(this.storageKeys.adminAuth, String(session.isAdminAuthenticated));
+    writeStorageItem(
+      this.storageKeys.appAuth,
+      String(session.isAuthenticated),
+      '浏览器本地存储空间已满，当前 Web 端无法保存登录状态。请清理浏览器站点数据后重试。'
+    );
+    writeStorageItem(
+      this.storageKeys.adminAuth,
+      String(session.isAdminAuthenticated),
+      '浏览器本地存储空间已满，当前 Web 端无法保存登录状态。请清理浏览器站点数据后重试。'
+    );
   }
 
   async clearSession(): Promise<void> {
