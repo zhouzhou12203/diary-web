@@ -55,62 +55,13 @@ git push origin apk-20260418-master
 
 如果这些 secrets 未配置，workflow 仍会构建 release 变体，但会回退到 debug 签名。这样生成的 APK 可以安装，但后续不同构建之间不保证可直接覆盖升级。
 
-## 本地构建
+## 本地构建说明
 
-只有在你确实要本机调试 Android 工程时，才需要下面这些环境。
+仓库不再维护本地 APK 打包命令，也不把本机 Android / Java 环境视为正式发布链路的一部分。
 
-- Node.js 与 npm
-- Android Studio
-- Android SDK
-- Java 21 或 Android Studio 推荐版本
-
-## 首次准备
-
-```bash
-npm install
-npm run android:sync:release
-```
-
-如果仓库中还没有 Android 工程，可执行：
-
-```bash
-npx cap add android
-```
-
-## 调试与打包
-
-同步 Web 资源到 Android 工程：
-
-```bash
-npm run android:sync:debug
-```
-
-在 Android Studio 中打开工程：
-
-```bash
-npm run android:open
-```
-
-生成调试 APK：
-
-```bash
-npm run android:apk:debug
-```
-
-调试 APK 会保留 `设备与离线` 卡片中的数据模式切换，用于本机联调。
-
-生成发布 APK：
-
-```bash
-npm run android:apk:release
-```
-
-发布 APK 默认固定为本地模式，不显示数据模式切换。
-
-默认输出位置通常为：
-
-- `android/app/build/outputs/apk/debug/app-debug.apk`
-- `android/app/build/outputs/apk/release/app-release.apk`
+- 如需发布 APK，请统一通过 `.github/workflows/build-android.yml`
+- 如需联调 debug 变体，也通过 GitHub Actions 的 `workflow_dispatch` 触发
+- `npm run android:sync:*` 仅保留给 CI 使用，用来在构建前同步 Web 资源到 Android 工程
 
 ## 调试版远程联动
 

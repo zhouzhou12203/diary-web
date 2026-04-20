@@ -3,6 +3,7 @@ import { Download, Smartphone, Wifi, WifiOff, X } from 'lucide-react';
 import type { FilterMeta } from '../filters/filterEntryMeta';
 import type { ViewMode } from '../ViewModeToggle';
 import type { BrowseDescriptor, BrowseSummaryItem, ClearRequest } from '../../hooks/useBrowseState';
+import type { ThemeMode } from '../../hooks/useTheme';
 import type { DiaryEntry } from '../../types/index.ts';
 import { ContentStatePanel } from '../ContentStatePanel';
 import { useInstallPrompt } from '../../hooks/useInstallPrompt';
@@ -119,10 +120,12 @@ function getViewModeLabel(viewMode: ViewMode) {
   }
 }
 
-function getThemeModeLabel(mode: 'light' | 'dark') {
+function getThemeModeLabel(mode: ThemeMode) {
   switch (mode) {
     case 'light':
       return '纸页浅色';
+    case 'paper':
+      return '纸页';
     case 'dark':
       return '夜读';
   }
